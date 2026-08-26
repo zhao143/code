@@ -24,9 +24,11 @@ code\main.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_dma_ex.h
 code\main.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_cortex.h
 code\main.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_flash.h
 code\main.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_flash_ex.h
+code\main.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_i2c.h
 code\main.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_pwr.h
 code\main.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_tim.h
 code\main.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_tim_ex.h
+code\main.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_uart.h
 code\main.o: ../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/cmsis_os.h
 code\main.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/FreeRTOS.h
 code\main.o: ../Core/Inc/FreeRTOSConfig.h
@@ -38,4 +40,10 @@ code\main.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/mpu_wrappers.h
 code\main.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/task.h
 code\main.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/list.h
 code\main.o: ../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/cmsis_os2.h
+code\main.o: ../Core/Inc/i2c.h
+code\main.o: ../Core/Inc/tim.h
+code\main.o: ../Core/Inc/usart.h
 code\main.o: ../Core/Inc/gpio.h
+code\main.o: ../Core/Inc/robot_app.h
+code\main.o: ../Core/Inc/robot_encoder.h
+code\main.o: ../Core/Inc/robot_sensors.h

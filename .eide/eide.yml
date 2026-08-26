@@ -26,6 +26,16 @@ virtualFolder:
                 - path: Core/Src/stm32f1xx_it.c
                 - path: Core/Src/stm32f1xx_hal_msp.c
                 - path: Core/Src/stm32f1xx_hal_timebase_tim.c
+                - path: Core/Src/i2c.c
+                - path: Core/Src/system_stm32f1xx.c
+                - path: Core/Src/tim.c
+                - path: Core/Src/usart.c
+                - path: Core/Src/robot_app.c
+                - path: Core/Src/robot_comm.c
+                - path: Core/Src/robot_delay.c
+                - path: Core/Src/robot_encoder.c
+                - path: Core/Src/robot_motor.c
+                - path: Core/Src/robot_sensors.c
               folders: []
     - name: Drivers
       files: []
@@ -45,6 +55,8 @@ virtualFolder:
             - path: Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_flash.c
             - path: Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_flash_ex.c
             - path: Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_exti.c
+            - path: Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_i2c.c
+            - path: Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_uart.c
           folders: []
         - name: CMSIS
           files:

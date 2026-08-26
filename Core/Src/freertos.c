@@ -25,6 +25,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "robot_app.h"
 
 /* USER CODE END Includes */
 
@@ -106,7 +107,7 @@ void MX_FREERTOS_Init(void) {
   myTask_LedHandle = osThreadNew(StartTask_Led, NULL, &myTask_Led_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
-  /* add threads, ... */
+  RobotApp_CreateTasks();
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -125,11 +126,7 @@ void MX_FREERTOS_Init(void) {
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN StartDefaultTask */
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
+  RobotApp_DefaultTask(argument);
   /* USER CODE END StartDefaultTask */
 }
 
@@ -143,12 +140,7 @@ void StartDefaultTask(void *argument)
 void StartTask_Led(void *argument)
 {
   /* USER CODE BEGIN StartTask_Led */
-  /* Infinite loop */
-  for(;;)
-  {
-		HAL_GPIO_TogglePin(Led_GPIO_Port, Led_Pin);
-    osDelay(500);
-  }
+  RobotApp_StatusLedTask(argument);
   /* USER CODE END StartTask_Led */
 }
 

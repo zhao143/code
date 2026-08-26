@@ -59,6 +59,26 @@ void Error_Handler(void);
 /* Private defines -----------------------------------------------------------*/
 #define Led_Pin GPIO_PIN_13
 #define Led_GPIO_Port GPIOC
+#define DS18B20_Pin GPIO_PIN_4
+#define DS18B20_GPIO_Port GPIOA
+#define TB6612_STBY_Pin GPIO_PIN_6
+#define TB6612_STBY_GPIO_Port GPIOA
+#define Beep_Pin GPIO_PIN_0
+#define Beep_GPIO_Port GPIOB
+#define Relay_Pin GPIO_PIN_1
+#define Relay_GPIO_Port GPIOB
+#define AIN2_Pin GPIO_PIN_12
+#define AIN2_GPIO_Port GPIOB
+#define AIN1_Pin GPIO_PIN_13
+#define AIN1_GPIO_Port GPIOB
+#define BIN1_Pin GPIO_PIN_14
+#define BIN1_GPIO_Port GPIOB
+#define BIN2_Pin GPIO_PIN_15
+#define BIN2_GPIO_Port GPIOB
+#define PWMB_Pin GPIO_PIN_8
+#define PWMB_GPIO_Port GPIOA
+#define PWMA_Pin GPIO_PIN_11
+#define PWMA_GPIO_Port GPIOA
 
 /* USER CODE BEGIN Private defines */
 
