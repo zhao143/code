@@ -9,7 +9,7 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from sensor_msgs.msg import BatteryState, Imu, RelativeHumidity, Temperature
-from std_msgs.msg import UInt16
+from std_msgs.msg import String, UInt16
 
 try:
     import serial
@@ -152,7 +152,7 @@ class RobotBaseBridge(Node):
         """
         super().__init__("robot_base_bridge")
 
-        self.declare_parameter("port", "/dev/ttyS1")
+        self.declare_parameter("port", "/dev/ttyAS5")
         self.declare_parameter("baud", 115200)
         self.declare_parameter("wheel_base_m", 0.16)
         self.declare_parameter("wheel_diameter_m", 0.065)
@@ -193,6 +193,7 @@ class RobotBaseBridge(Node):
         self.yaw = 0.0
 
         self.cmd_sub = self.create_subscription(Twist, "cmd_vel", self.on_cmd_vel, 10)
+        self.state_cmd_sub = self.create_subscription(String, "base/state_cmd", self.on_state_cmd, 10)
         self.odom_pub = self.create_publisher(Odometry, "odom", 10)
         self.battery_pub = self.create_publisher(BatteryState, "battery_state", 10)
         self.imu_pub = self.create_publisher(Imu, "imu/raw", 10)
@@ -300,6 +301,35 @@ class RobotBaseBridge(Node):
         """
         self.last_twist = msg
         self.last_cmd_time = time.monotonic()
+
+    def on_state_cmd(self, msg: String):
+        """接收上层发来的底盘状态命令。
+
+        Web 页面、K230 屏幕或调试脚本可以向 /base/state_cmd 发布字符串命令：
+        enable 解除空闲并允许运动；stop/idle 进入空闲并停止；clear/clear_fault 清除
+        可恢复故障；estop 立即急停。真正执行这些状态变化的仍然是 STM32。
+        """
+        command = msg.data.strip().lower()
+
+        if command in ("enable", "run", "ready"):
+            self.write_frame(CMD_SET_STATE, bytes([STATE_CMD_ENABLE]))
+            self.get_logger().info("state command sent: enable")
+        elif command in ("stop", "idle"):
+            self.last_twist = Twist()
+            self.last_cmd_time = 0.0
+            self.write_frame(CMD_SET_MOTION, struct.pack("<hhB", 0, 0, MOTION_MODE_SPEED))
+            self.write_frame(CMD_SET_STATE, bytes([STATE_CMD_IDLE]))
+            self.get_logger().info("state command sent: idle")
+        elif command in ("clear", "clear_fault", "reset_fault"):
+            self.write_frame(CMD_SET_STATE, bytes([STATE_CMD_CLEAR_FAULT]))
+            self.get_logger().info("state command sent: clear_fault")
+        elif command in ("estop", "emergency_stop"):
+            self.last_twist = Twist()
+            self.last_cmd_time = 0.0
+            self.write_frame(CMD_ESTOP)
+            self.get_logger().warning("state command sent: estop")
+        else:
+            self.get_logger().warning(f"unknown state command ignored: {msg.data!r}")
 
     def send_control(self):
         """周期性把最新 /cmd_vel 转换为左右轮命令并发送给 STM32。

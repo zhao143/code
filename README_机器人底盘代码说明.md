@@ -11,12 +11,17 @@
 
 - STM32 底板固件：`Core/Src/robot_*.c` 和 `Core/Inc/robot_*.h`
 - KICKPI ROS2 串口桥接包：`kickpi_ros2_ws/src/robot_base_bridge`
+- K230/KICKPI/Web/数据库总体方案：`系统整体通信与Web数据库实现方案.md`
 
 STM32 负责底层实时控制：TB6612 电机驱动、编码器采样、INA219 电池电压、DHT30 温湿度、MPU6050 IMU、DS18B20 电池温度、蜂鸣器、风扇继电器。
 
 当前先使用 UART1 调试模式：STM32 通过 USART1 输出可读的状态数据，并接收简单文本命令。等底板调试稳定后，再把 `ROBOT_UART1_DEBUG_ONLY` 改为 `0`，切回 KICKPI ROS2 二进制通信。
 
 KICKPI 负责 ROS2：订阅 `/cmd_vel`，通过串口给 STM32 发运动命令，并发布 `/odom`、`/battery_state`、`/imu/raw`、`/env/temperature`、`/env/humidity`、`/battery/temperature`、`/base/faults`。
+
+K230 的识别结果不要混入 STM32 电机串口，推荐通过以太网以 HTTP/JSON 发送给
+KICKPI；KICKPI 再把识别结果发布到 ROS2、写入 SQLite，并由 Web 页面显示。完整的
+接口格式、数据库表和实施步骤见 `系统整体通信与Web数据库实现方案.md`。
 
 ## 2. CubeMX 必须保持的配置
 
@@ -442,12 +447,46 @@ buf[6]       CRC8，校验 buf[0] 到 buf[5]
 
 ```bash
 cd ~/kickpi_ros2_ws
-sudo apt update
-sudo apt install -y python3-serial ros-${ROS_DISTRO}-geometry-msgs ros-${ROS_DISTRO}-nav-msgs ros-${ROS_DISTRO}-sensor-msgs
+source /opt/ros/humble/setup.bash
+sudo apt install -y python3-serial
 colcon build
 source install/setup.bash
-ros2 launch robot_base_bridge base_bridge.launch.py port:=/dev/ttyS1 baud:=115200
+ros2 launch robot_base_bridge base_bridge.launch.py port:=/dev/ttyAS5 baud:=115200
 ```
+
+本项目这块 KICKPI 的普通 UART5 建议使用 `/dev/ttyAS5`，不是调试串口。40Pin
+接线按下面连接：
+
+```text
+KICKPI 40Pin 8脚  UART5_TX  -> STM32 USART1_RX（PA10）
+KICKPI 40Pin 10脚 UART5_RX  <- STM32 USART1_TX（PA9）
+KICKPI 40Pin 6脚  GND       -> STM32 GND
+```
+
+KICKPI 和 STM32 的 UART 都是 3.3V 逻辑，不能把 5V 电源直接接到 UART 信号脚。
+两块板必须共地，TX/RX 必须交叉连接。
+
+KICKPI 已经存在 `/opt/ros/humble`，登录 root 后需要先 source：
+
+```bash
+source /opt/ros/humble/setup.bash
+```
+
+如果希望每次 root 登录自动获得 ROS2 环境，可以把上面这一行加入 `/root/.bashrc`。
+
+仓库中还提供了 `kickpi_ros2_ws/robot-base-bridge.service`。安装到 KICKPI 后可以：
+
+```bash
+cp robot-base-bridge.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable robot-base-bridge.service
+systemctl start robot-base-bridge.service
+systemctl status robot-base-bridge.service
+```
+
+注意：只有当 STM32 固件已经把 `ROBOT_UART1_DEBUG_ONLY` 改为 `0` 并烧录后，才启动
+这个 systemd 服务。STM32 仍处于文本调试模式时不要启动，否则 KICKPI 会向 UART1
+发送二进制帧。
 
 测试运动：
 
@@ -492,5 +531,10 @@ ros2 topic echo /imu/raw
 - Keil MDK 命令行编译通过：`0 Error(s), 0 Warning(s)`
 - 固件体积：最近一次构建为 `Code=32656`，`ZI-data=13980`
 - Python ROS2 桥接脚本通过语法检查
+- KICKPI 已确认运行 Ubuntu 22.04.5、ROS 2 Humble，已安装 `python3-serial`
+- KICKPI 工作空间已部署到 `/root/kickpi_ros2_ws` 并成功用 `colcon build --symlink-install`
+- KICKPI 普通 UART5 设备为 `/dev/ttyAS5`，桥接包默认已改为该设备
+- `/etc/systemd/system/robot-base-bridge.service` 已安装并通过 systemd 校验，目前保持
+  `disabled/inactive`，等 STM32 正式通信固件准备好后再启动
 
 当前还没有实物硬件验证，所以第一次上电请按第 6 节逐项测试。

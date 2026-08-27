@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>机器人底盘监控</title>
+  <style>
+    :root {
+      --ink: #1f2933;
+      --muted: #667085;
+      --line: #d7dee7;
+      --paper: #f6f8fa;
+      --panel: #ffffff;
+      --blue: #1976d2;
+      --green: #18864b;
+      --amber: #b26a00;
+      --red: #c62828;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font: 15px/1.45 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    }
+    header {
+      padding: 18px 24px;
+      color: #fff;
+      background: #16324f;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    header h1 { margin: 0; font-size: 22px; font-weight: 650; }
+    #connection { font-size: 13px; color: #c8e6c9; white-space: nowrap; }
+    main { max-width: 1180px; margin: 0 auto; padding: 20px; }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .metric, .section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    .metric { padding: 14px; min-height: 84px; }
+    .metric label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+    .metric strong { font-size: 21px; font-weight: 650; }
+    .section { margin-top: 16px; padding: 16px; }
+    .section h2 { margin: 0 0 12px; font-size: 17px; }
+    .controls {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(70px, 1fr));
+      gap: 8px;
+      max-width: 600px;
+    }
+    button {
+      border: 1px solid #b8c4d1;
+      border-radius: 6px;
+      min-height: 42px;
+      padding: 8px 10px;
+      color: var(--ink);
+      background: #f8fafc;
+      cursor: pointer;
+      font: inherit;
+      touch-action: none;
+    }
+    button:hover { border-color: var(--blue); background: #eef6ff; }
+    button:active, button.active { color: #fff; background: var(--blue); border-color: var(--blue); }
+    button.stop { background: #fff4db; border-color: #e0a337; }
+    button.estop { color: #fff; background: var(--red); border-color: var(--red); }
+    .state-row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+    .state-row button { min-width: 104px; }
+    .tables {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 8px 6px; text-align: left; border-bottom: 1px solid var(--line); }
+    th { color: var(--muted); font-weight: 600; }
+    .good { color: var(--green); }
+    .warn { color: var(--amber); }
+    .bad { color: var(--red); }
+    canvas { width: 100%; height: 180px; border: 1px solid var(--line); border-radius: 6px; background: #fbfcfe; }
+    @media (max-width: 850px) {
+      .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .tables { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 520px) {
+      header { padding: 14px 16px; }
+      main { padding: 12px; }
+      .controls { grid-template-columns: repeat(3, 1fr); }
+      .controls button:nth-child(1) { grid-column: 2; }
+      .controls button:nth-child(2) { grid-column: 1; grid-row: 2; }
+      .controls button:nth-child(3) { grid-column: 2; grid-row: 2; }
+      .controls button:nth-child(4) { grid-column: 3; grid-row: 2; }
+      .controls button:nth-child(5) { grid-column: 2; grid-row: 3; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>机器人底盘监控</h1>
+    <div id="connection">连接中...</div>
+  </header>
+  <main>
+    <section class="metrics">
+      <div class="metric"><label>电池电压</label><strong id="battery">--</strong></div>
+      <div class="metric"><label>环境温度</label><strong id="env-temp">--</strong></div>
+      <div class="metric"><label>环境湿度</label><strong id="env-humi">--</strong></div>
+      <div class="metric"><label>电池温度</label><strong id="bat-temp">--</strong></div>
+      <div class="metric"><label>底盘故障</label><strong id="faults">--</strong></div>
+    </section>
+
+    <section class="section">
+      <h2>底盘控制</h2>
+      <div class="controls">
+        <button data-motion="forward">前进</button>
+        <button data-motion="left">左转</button>
+        <button class="stop" data-motion="stop">停车</button>
+        <button data-motion="right">右转</button>
+        <button data-motion="back">后退</button>
+      </div>
+      <div class="state-row">
+        <button data-state="enable">使能</button>
+        <button data-state="clear_fault">清故障</button>
+        <button class="estop" data-state="estop">急停</button>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>电池电压记录</h2>
+      <canvas id="voltage-chart" width="1100" height="180"></canvas>
+    </section>
+
+    <div class="tables">
+      <section class="section">
+        <h2>当前位置</h2>
+        <table><tbody id="odom-table"></tbody></table>
+      </section>
+      <section class="section">
+        <h2>最近识别结果</h2>
+        <table>
+          <thead><tr><th>时间</th><th>来源</th><th>目标数量</th></tr></thead>
+          <tbody id="vision-table"></tbody>
+        </table>
+      </section>
+    </div>
+  </main>
+  <script>
+    const token = localStorage.getItem("robot_token") || "robot-dev-token";
+    const motionMap = {
+      forward: [0.05, 0], back: [-0.04, 0],
+      left: [0, 0.45], right: [0, -0.45], stop: [0, 0]
+    };
+    let activeButton = null;
+    let heartbeat = null;
+    let history = [];
+
+    async function api(path, method = "GET", body = null) {
+      const options = { method, headers: { "X-Device-Token": token } };
+      if (body !== null) {
+        options.headers["Content-Type"] = "application/json";
+        options.body = JSON.stringify(body);
+      }
+      const response = await fetch(path, options);
+      return response.json();
+    }
+
+    function setText(id, value, suffix = "") {
+      document.getElementById(id).textContent =
+        value === null || value === undefined ? "--" : `${value}${suffix}`;
+    }
+
+    function sendMotion(name) {
+      const [linear, angular] = motionMap[name];
+      return api("/api/v1/control/cmd_vel", "POST", {
+        source: "web", button: name,
+        linear_x_m_s: linear, angular_z_rad_s: angular
+      });
+    }
+
+    function startMotion(name, button) {
+      if (!motionMap[name]) return;
+      stopMotion();
+      activeButton = button;
+      if (name !== "stop") button.classList.add("active");
+      sendMotion(name);
+      if (name !== "stop") heartbeat = setInterval(() => sendMotion(name), 100);
+    }
+
+    function stopMotion() {
+      if (heartbeat) clearInterval(heartbeat);
+      heartbeat = null;
+      if (activeButton) activeButton.classList.remove("active");
+      activeButton = null;
+      sendMotion("stop");
+    }
+
+    document.querySelectorAll("[data-motion]").forEach(button => {
+      button.addEventListener("pointerdown", event => {
+        event.preventDefault();
+        startMotion(button.dataset.motion, button);
+      });
+      ["pointerup", "pointercancel", "pointerleave"].forEach(type => {
+        button.addEventListener(type, event => {
+          event.preventDefault();
+          if (button.dataset.motion !== "stop") stopMotion();
+        });
+      });
+    });
+    document.querySelectorAll("[data-state]").forEach(button => {
+      button.addEventListener("click", () => api("/api/v1/control/state", "POST", {
+        source: "web", command: button.dataset.state
+      }));
+    });
+
+    function drawVoltageChart() {
+      const canvas = document.getElementById("voltage-chart");
+      const ctx = canvas.getContext("2d");
+      const width = canvas.width, height = canvas.height;
+      ctx.clearRect(0, 0, width, height);
+      ctx.strokeStyle = "#d7dee7";
+      ctx.beginPath(); ctx.moveTo(42, 12); ctx.lineTo(42, height - 24);
+      ctx.lineTo(width - 12, height - 24); ctx.stroke();
+      if (history.length < 2) return;
+      const values = history.map(item => Number(item.battery_voltage_v)).filter(Number.isFinite);
+      if (values.length < 2) return;
+      const min = Math.min(...values), max = Math.max(...values);
+      const span = Math.max(0.1, max - min);
+      ctx.strokeStyle = "#1976d2";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      values.forEach((value, index) => {
+        const x = 42 + index * (width - 58) / (values.length - 1);
+        const y = height - 24 - (value - min) * (height - 42) / span;
+        index ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      });
+      ctx.stroke();
+    }
+
+    function updateLatest(data) {
+      const item = data.data || {};
+      setText("battery", item.battery_voltage_v?.toFixed(3), " V");
+      setText("env-temp", item.environment_temperature_c?.toFixed(1), " °C");
+      setText("env-humi", item.environment_humidity_percent?.toFixed(1), " %");
+      setText("bat-temp", item.battery_temperature_c?.toFixed(1), " °C");
+      const faults = Number(item.faults || 0);
+      const faultElement = document.getElementById("faults");
+      faultElement.textContent = `0x${faults.toString(16).padStart(4, "0").toUpperCase()}`;
+      faultElement.className = faults ? "bad" : "good";
+      const odom = item.odom || {};
+      document.getElementById("odom-table").innerHTML = `
+        <tr><th>X</th><td>${Number(odom.x_m || 0).toFixed(3)} m</td></tr>
+        <tr><th>Y</th><td>${Number(odom.y_m || 0).toFixed(3)} m</td></tr>
+        <tr><th>Yaw</th><td>${Number(odom.yaw_rad || 0).toFixed(3)} rad</td></tr>`;
+    }
+
+    async function refresh() {
+      try {
+        const latest = await api("/api/v1/latest");
+        updateLatest(latest);
+        document.getElementById("connection").textContent = "KICKPI 网关在线";
+        document.getElementById("connection").className = "good";
+        const telemetry = await api("/api/v1/telemetry?limit=120");
+        history = (telemetry.data || []).reverse();
+        drawVoltageChart();
+        const events = await api("/api/v1/vision/events?limit=8");
+        document.getElementById("vision-table").innerHTML = (events.data || []).map(item => `
+          <tr><td>${new Date(item.timestamp * 1000).toLocaleTimeString()}</td>
+              <td>${item.source}</td><td>${item.detection_count}</td></tr>`).join("");
+      } catch (error) {
+        document.getElementById("connection").textContent = "网关离线";
+        document.getElementById("connection").className = "bad";
+      }
+    }
+    refresh();
+    setInterval(refresh, 1000);
+  </script>
+</body>
+</html>

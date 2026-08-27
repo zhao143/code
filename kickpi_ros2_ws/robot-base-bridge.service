@@ -1,0 +1,17 @@
+[Unit]
+Description=ROS2 robot base serial bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/kickpi_ros2_ws
+Environment=ROS_DOMAIN_ID=0
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && source /root/kickpi_ros2_ws/install/setup.bash && exec ros2 launch robot_base_bridge base_bridge.launch.py port:=/dev/ttyAS5 baud:=115200'
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

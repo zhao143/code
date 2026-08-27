@@ -1,0 +1,17 @@
+[Unit]
+Description=ROS2 robot web gateway and telemetry database
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/kickpi_ros2_ws
+Environment=ROS_DOMAIN_ID=0
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && source /root/kickpi_ros2_ws/install/setup.bash && exec ros2 launch robot_gateway gateway.launch.py host:=0.0.0.0 port:=8080 db_path:=/root/robot_data/robot.db token:=robot-dev-token control_timeout_s:=0.3'
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
