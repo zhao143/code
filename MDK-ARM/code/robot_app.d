@@ -47,4 +47,5 @@ code\robot_app.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/mpu_wrapper
 code\robot_app.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/task.h
 code\robot_app.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/list.h
 code\robot_app.o: ../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/cmsis_os2.h
+code\robot_app.o: D:\Keil_v5\ARM\ARM_Compiler_5.06u7\Bin\..\include\stdio.h
 code\robot_app.o: D:\Keil_v5\ARM\ARM_Compiler_5.06u7\Bin\..\include\string.h

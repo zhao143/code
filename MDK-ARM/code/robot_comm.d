@@ -29,6 +29,9 @@ code\robot_comm.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_pwr.h
 code\robot_comm.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_tim.h
 code\robot_comm.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_tim_ex.h
 code\robot_comm.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_uart.h
+code\robot_comm.o: ../Core/Inc/robot_config.h
 code\robot_comm.o: ../Core/Inc/usart.h
 code\robot_comm.o: ../Core/Inc/main.h
+code\robot_comm.o: D:\Keil_v5\ARM\ARM_Compiler_5.06u7\Bin\..\include\stdarg.h
+code\robot_comm.o: D:\Keil_v5\ARM\ARM_Compiler_5.06u7\Bin\..\include\stdio.h
 code\robot_comm.o: D:\Keil_v5\ARM\ARM_Compiler_5.06u7\Bin\..\include\string.h

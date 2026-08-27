@@ -20,9 +20,41 @@ typedef struct
   int16_t imu_temp_c_x100;
 } RobotSensorsData_t;
 
+/*
+ * 初始化传感器模块。
+ *
+ * 会尝试配置 INA219、唤醒 MPU6050，并把 DS18B20 引脚释放为上拉输入状态。
+ * 某个传感器初始化失败不会卡死系统，后续状态里的 valid_flags 会告诉你
+ * 哪些传感器实际读到了。
+ */
 void RobotSensors_Init(void);
+
+/*
+ * 周期性更新所有传感器。
+ *
+ * 快速传感器 INA219/MPU6050 每 100ms 更新一次，DHT30/DS18B20 约 1s 更新一次。
+ * 这个函数由 sensorTask 循环调用，不要放在中断里。
+ */
 void RobotSensors_Update(void);
+
+/*
+ * 读取最近一次传感器缓存。
+ *
+ * 参数：
+ *   out：输出结构体指针。传 NULL 时函数直接返回。
+ */
 void RobotSensors_Get(RobotSensorsData_t *out);
+
+/*
+ * 扫描 I2C2 总线上的设备地址。
+ *
+ * 参数：
+ *   addresses：用于保存发现地址的数组，可以传 NULL。
+ *   max_count：addresses 数组最多能保存几个地址。
+ *
+ * 返回值：
+ *   总线上应答的设备数量。调试 I2C 模块接线时可以临时调用这个函数。
+ */
 uint8_t RobotSensors_ScanI2C(uint8_t *addresses, uint8_t max_count);
 
 #endif
