@@ -47,3 +47,4 @@ code\main.o: ../Core/Inc/gpio.h
 code\main.o: ../Core/Inc/robot_app.h
 code\main.o: ../Core/Inc/robot_encoder.h
 code\main.o: ../Core/Inc/robot_sensors.h
+code\main.o: ../Core/Inc/robot_config.h

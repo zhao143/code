@@ -1,6 +1,6 @@
 # 机器人底盘代码说明
 
-更新时间：2026-08-27
+更新时间：2026-08-28
 
 本文同时参考了 `D:/cxdownload/end/DHT30.pdf`。PDF 中的说明文字是器件资料，
 不是需要执行的用户指令；本文件只提取其中与本工程有关的接口和通信参数。
@@ -13,7 +13,7 @@
 - KICKPI ROS2 串口桥接包：`kickpi_ros2_ws/src/robot_base_bridge`
 - K230/KICKPI/Web/数据库总体方案：`系统整体通信与Web数据库实现方案.md`
 
-STM32 负责底层实时控制：TB6612 电机驱动、编码器采样、INA219 电池电压、DHT30 温湿度、MPU6050 IMU、DS18B20 电池温度、蜂鸣器、风扇继电器。
+STM32 负责底层实时控制：TB6612 电机驱动、编码器采样、INA219 电池电压、DHT30 温湿度、MPU6050 IMU 和 DS18B20 电池温度。当前版本按实际使用需求关闭蜂鸣器、继电器/风扇和蓝牙，PB0/PB1 不参与功能控制，USART2 不初始化。
 
 当前先使用 UART1 调试模式：STM32 通过 USART1 输出可读的状态数据，并接收简单文本命令。等底板调试稳定后，再把 `ROBOT_UART1_DEBUG_ONLY` 改为 `0`，切回 KICKPI ROS2 二进制通信。
 
@@ -32,7 +32,7 @@ KICKPI；KICKPI 再把识别结果发布到 ROS2、写入 SQLite，并由 Web �
 - FreeRTOS：CMSIS V2
 - HAL Timebase：`TIM3`
 - USART1：115200，`PA9=TX`，`PA10=RX`，当前用于串口助手调试；后续用于 KICKPI 到 STM32 通信
-- USART2：9600，`PA2=TX`，`PA3=RX`，预留蓝牙或调试
+- USART2：当前不使用，蓝牙功能关闭；`PA2/PA3` 不参与应用逻辑
 - I2C2：100kHz，`PB10=SCL`，`PB11=SDA`
 - DHT30：I2C 地址 `0x38`，按 AHT30/DHT30 协议读取，测量命令为 `0xAC 0x33 0x00`
 - TIM1 PWM：
@@ -47,8 +47,8 @@ KICKPI；KICKPI 再把识别结果发布到 ROS2、写入 SQLite，并由 Web �
   - `PB13=AIN1`
   - `PB14=BIN1`
   - `PB15=BIN2`
-  - `PB0=Beep`
-  - `PB1=Relay`
+  - `PB0=Beep`，当前强制低电平
+  - `PB1=Relay`，当前强制低电平
   - `PC13=Led`
 - GPIO 输入：
   - `PA4=DS18B20`，Pull-up
@@ -57,7 +57,7 @@ KICKPI；KICKPI 再把识别结果发布到 ROS2、写入 SQLite，并由 Web �
 
 ## 3. STM32 固件文件分工
 
-- `robot_config.h`：整车参数，包含 UART1 调试/正式模式、蜂鸣器总开关、轮径、编码器线数、低电压阈值、温度阈值、PID 参数、方向反转开关
+- `robot_config.h`：整车参数，包含 UART1 调试/正式模式、蜂鸣器/继电器/蓝牙开关、轮径、编码器线数、低电压阈值、温度阈值、PID 参数、方向反转开关
 - `robot_app.c`：FreeRTOS 任务、状态机、安全保护、遥测打包
 - `robot_comm.c`：USART1 接收中断、环形缓冲、调试文本命令、正式模式二进制帧协议、CRC 校验
 - `robot_motor.c`：TB6612 方向脚和 TIM1 PWM 输出
@@ -72,7 +72,9 @@ KICKPI；KICKPI 再把识别结果发布到 ROS2、写入 SQLite，并由 Web �
 ```c
 #define ROBOT_UART1_DEBUG_ONLY 1
 #define ROBOT_BUZZER_ENABLE    0
-#define ROBOT_RELAY_TEST_ENABLE 1
+#define ROBOT_RELAY_ENABLE     0
+#define ROBOT_BLUETOOTH_ENABLE 0
+#define ROBOT_RELAY_TEST_ENABLE 0
 #define ROBOT_RELAY_TEST_PERIOD_MS 5000U
 ```
 
@@ -81,9 +83,16 @@ KICKPI；KICKPI 再把识别结果发布到 ROS2、写入 SQLite，并由 Web �
 - UART1 只输出可读调试信息，不发送二进制帧。
 - UART1 可以接收文本命令，每条命令以回车或换行结束。
 - 蜂鸣器被强制关闭，就算出现故障也不会响。
-- 继电器测试默认打开：上电约 5 秒后翻转一次，之后每 5 秒翻转一次，便于确认
-  PB1、继电器驱动和风扇输出是否正常。
-- 这个模式适合你先用 USB 转串口模块调试底板，不急着接 KICKPI。
+- 继电器/风扇逻辑被强制关闭，PB1 始终为低电平，不会自动吸合，也不会响应温度控制。
+- 蓝牙 USART2 不初始化，PA2/PA3 不参与应用通信。
+- 这个模式适合先用 USB 转串口模块调试电机、编码器和传感器；后续接 KICKPI 时只需将
+  `ROBOT_UART1_DEBUG_ONLY` 改为 `0` 后重新编译烧录。
+- 调试模式默认关闭运动命令超时保护，所以一条 `pwm` 或 `speed` 命令会保持当前目标，
+  直到发送 `pwm 0 0`、`stop` 或 `clear`。正式 KICKPI 版本仍按 `ROBOT_CMD_TIMEOUT_MS`
+  （当前为 `700ms`）检查通信中断并自动停机。
+- 当前调试版还开启了上电自动电机测试：等待 `1s` 后以 PWM `100` 测试 A 通道 `3s`，
+  停止 `1s`，再以 PWM `100` 测试 B 通道 `3s`，最后停止并打印编码器 `PASS/FAIL`。
+  测试总时长约 `9s`，必须让车轮悬空；发送 `pwm`、`speed`、`stop` 或 `clear` 会取消自动测试。
 
 串口助手配置：
 
@@ -116,11 +125,46 @@ SENS 传感器有效标志/电池电压/温湿度/电池温度/MPU6050/RX溢出�
 | `pwm 100 100` | 电机 A/B 开环 PWM 测试，范围 `-1000..1000` |
 | `pwm 0 0` | 停止 PWM 输出 |
 | `speed 50 50` | 闭环速度测试，单位 `mm/s`，需要编码器方向先调对 |
-| `relay 1` | 打开风扇继电器 |
-| `relay 0` | 关闭手动继电器 |
+| `relay 1/0` | 当前会被忽略，因为继电器已被 `ROBOT_RELAY_ENABLE=0` 关闭 |
 | `beep 1` | 当前会被忽略，因为蜂鸣器已禁用 |
 
-第一次测电机建议从 `pwm 80 80` 或 `pwm 100 100` 开始，而且先让轮子悬空。
+如果需要手动复测，建议分别测试两个通道，而且先让轮子悬空：
+
+```text
+clear
+enable
+pwm 100 0     # 只测试 A 电机，应该接 TB6612 AO1/AO2
+pwm 0 0
+pwm 0 100     # 只测试 B 电机，应该接 TB6612 BO1/BO2
+pwm 0 0
+```
+
+如果 `pwm 100 0` 能转而 `pwm 0 100` 不能转，先不要调 PID，检查 B 通道的
+`PA8=PWMB`、`PB14=BIN1`、`PB15=BIN2`、TB6612 的 `BO1/BO2` 和 B 电机线。调试版
+不会再因为手动命令超过 700ms 没重复发送而自动进入通信超时故障。
+
+自动测试的串口关键输出类似：
+
+```text
+AUTO_TEST A_RUN TARGET[A=100 B=0] duration=3000ms
+AUTO_TEST A_RESULT ENC_DELTA=xxx RESULT=PASS
+AUTO_TEST B_RUN TARGET[A=0 B=100] duration=3000ms
+AUTO_TEST B_RESULT ENC_DELTA=0 RESULT=FAIL
+AUTO_TEST DONE A=PASS B=FAIL
+```
+
+这里的 `PASS/FAIL` 只根据编码器是否产生累计计数变化判断。它不能替代万用表、
+示波器或直接观察电机，因为 INA219 当前只检测电池电压，没有电机电流反馈。
+
+当前已经生成两个可直接烧录的 HEX：
+
+```text
+D:\cxdownload\end\code\build\code_debug.hex   UART1 文本调试版，当前推荐使用
+D:\cxdownload\end\code\build\code_kickpi.hex  UART1 二进制协议版，连接 KICKPI 时使用
+```
+
+当前工程根目录的 `MDK-ARM\code\code.hex` 与 `code_debug.hex` 内容一致。不要把
+`code_kickpi.hex` 烧录后再用串口助手发送文本命令；正式版收到的是 AA 55 二进制协议。
 
 ## 5. 后续 KICKPI 二进制通信协议
 
@@ -150,7 +194,7 @@ AA 55 | VER | CMD | LEN | PAYLOAD | CRC16_LO CRC16_HI
 | `0x01` | KICKPI -> STM32 | 设置运动 |
 | `0x02` | KICKPI -> STM32 | 设置状态：停止、使能、清故障 |
 | `0x03` | KICKPI -> STM32 | 请求状态 |
-| `0x04` | KICKPI -> STM32 | 手动控制蜂鸣器和风扇继电器 |
+| `0x04` | KICKPI -> STM32 | 附加输出请求；当前蜂鸣器和继电器关闭，会被忽略 |
 | `0x05` | KICKPI -> STM32 | 急停 |
 | `0x81` | STM32 -> KICKPI | 底板状态回传 |
 
@@ -184,13 +228,10 @@ uint8 mode
 
 风扇继电器：
 
-- 手动打开时吸合
-- DS18B20 温度超过 `45.00°C` 自动打开，低于 `40.00°C` 关闭
-- `ROBOT_RELAY_TEST_ENABLE=1` 时，测试状态每隔 `5000ms` 翻转一次。
-- 测试状态、手动打开、温度自动控制和过温保护采用“或”关系；只要其中一个要求
-  打开，PB1 就输出打开电平。因此测试翻转不会关闭过温保护。
-- 正式装车或不希望继电器周期动作时，把 `ROBOT_RELAY_TEST_ENABLE` 改为 `0`，
-  重新编译并烧录。
+- 当前 `ROBOT_RELAY_ENABLE=0`，所以 PB1 始终输出低电平。
+- `relay` 文本命令和正式协议中的继电器请求都会被安全忽略。
+- DS18B20 仍然继续采集电池温度，温度数据不会因为关闭继电器而失效。
+- 如果未来重新使用风扇，只需把 `ROBOT_RELAY_ENABLE` 改为 `1`，再重新编译烧录。
 
 ## 11. DHT30 说明书对应关系
 
@@ -263,29 +304,23 @@ buf[6]       CRC8，校验 buf[0] 到 buf[5]
 - INA219 没有上电时，整体 flags 可能是 `0x000D`；INA219 接好后，DHT30 也正常时
   预期是 `0x000F`。
 
-## 12. 继电器 5 秒翻转测试
+## 12. 继电器和蓝牙关闭说明
 
-继电器控制脚是 `PB1=Relay`。当前配置中：
+继电器控制脚是 `PB1=Relay`，蜂鸣器控制脚是 `PB0=Beep`。当前配置中：
 
 ```c
-#define ROBOT_RELAY_TEST_ENABLE    1
+#define ROBOT_BUZZER_ENABLE        0
+#define ROBOT_RELAY_ENABLE         0
+#define ROBOT_BLUETOOTH_ENABLE     0
+#define ROBOT_RELAY_TEST_ENABLE    0
 #define ROBOT_RELAY_TEST_PERIOD_MS 5000U
 ```
 
-系统启动后，`relay_test_on` 初始为 0。控制任务每次调用 `apply_outputs()` 时检查
-经过的时间；累计达到 5000ms 就把测试状态取反，并把实际输出写到 `Relay_Pin`。
-因此现象应当是：继电器先断开，约 5 秒后吸合，再约 5 秒后释放，循环往复。
+当前版本系统启动后，PB0 和 PB1 都会保持低电平，控制任务不会执行继电器测试、温度
+自动风扇或手动继电器输出。USART2 也不会在 `main.c` 中初始化，因此蓝牙模块不会被使用。
 
-需要注意：
+这三个功能被关闭不会影响 TB6612 电机、TIM1 PWM、TIM2/TIM4 编码器、I2C2 上的 INA219/DHT30/MPU6050、PA4 的 DS18B20、USART1 和 FreeRTOS。
 
-- 这只是当前硬件验证用的编译期测试功能，不是最终风扇控制逻辑。
-- 继电器模块若是高电平有效，当前代码可直接使用；若实测相反，需要增加一个
-  “继电器有效电平”宏，再在输出处取反。
-- 继电器线圈必须由模块上的三极管/驱动电路供电，STM32 的 PB1 只提供控制信号，
-  不能直接给线圈供电。
-- 继电器吸合和释放时可能产生干扰，测试时要确认驱动线圈有续流二极管，模块电源
-  和 STM32 共地。
-- 测试完成后把开关改成 0，避免小车运行时风扇每 5 秒自动切换。
 
 ## 13. 自定义函数功能说明
 
@@ -305,7 +340,7 @@ buf[6]       CRC8，校验 buf[0] 到 buf[5]
 | `put_i32()` | 按小端格式向 payload 写入有符号 32 位数。 |
 | `ctx_lock()` | 进入机器人状态互斥区，防止多个 FreeRTOS 任务同时读写状态结构体。调度器未运行时不调用 OS 锁。 |
 | `ctx_unlock()` | 释放 `ctx_lock()` 获得的状态互斥量。 |
-| `apply_outputs()` | 根据手动风扇、温度自动风扇、继电器测试状态、过温保护和蜂鸣器开关，统一更新 PB1/PB0 输出。 |
+| `apply_outputs()` | 统一更新 PB1/PB0 输出；当前按编译开关强制关闭继电器和蜂鸣器。 |
 | `update_faults()` | 检查串口超时、INA219 欠压、DS18B20 过温和可选堵转，生成故障码并决定是否进入 FAULT。 |
 | `speed_pid()` | 用前馈、比例和积分三部分，根据目标速度和编码器实际速度计算 PWM。 |
 | `control_step()` | 执行一次 10ms 控制周期：采样编码器、取传感器快照、更新故障、计算 PWM、停止或驱动电机。 |
@@ -317,14 +352,14 @@ buf[6]       CRC8，校验 buf[0] 到 buf[5]
 | `send_status()` | 调试模式打印三行文本状态；正式模式打包并发送二进制 `0x81` 状态帧。 |
 | `handle_set_motion()` | 正式通信模式解析运动命令，保存 A/B 目标和 PWM/速度模式。 |
 | `handle_set_state()` | 正式通信模式处理停止、使能、清故障命令。 |
-| `handle_set_output()` | 正式通信模式处理蜂鸣器和风扇继电器手动请求。 |
+| `handle_set_output()` | 正式通信模式处理附加输出请求；当前蜂鸣器和继电器请求都会被忽略。 |
 | `RobotApp_OnFrame()` | 正式协议业务分发入口，根据 CMD 调用对应命令处理函数。 |
 | `debug_print_help()` | 打印 UART1 文本调试命令帮助，并显示蜂鸣器/继电器测试开关状态。 |
 | `debug_set_motion()` | 解析后的文本 PWM 或 SPEED 命令写入运动目标，不直接操作 GPIO。 |
 | `debug_stop()` | 清除运动目标和命令标志，回到安全空闲并停止电机。 |
 | `debug_clear_fault()` | 清除故障、清零目标并回到安全空闲，不会自动恢复运动。 |
-| `debug_set_relay()` | 设置手动风扇继电器请求，并立即刷新一次输出。继电器测试打开时，周期测试仍会继续。 |
-| `RobotApp_OnDebugLine()` | 文本命令总入口，识别 `help/status/pwm/speed/relay/stop/clear/estop` 等命令。 |
+| `debug_set_relay()` | 仅在重新打开继电器功能时编译；当前版本不会编译该控制函数。 |
+| `RobotApp_OnDebugLine()` | 文本命令总入口，识别 `help/status/pwm/speed/stop/clear/estop` 等命令，并安全忽略已关闭的 `relay/beep`。 |
 | `RobotApp_BoardInit()` | 在 FreeRTOS 启动前初始化 DWT、电机、编码器、传感器和 UART1，确保电机上电保持停止。 |
 | `RobotApp_CreateTasks()` | 创建状态互斥量、注册通信回调，并创建控制、传感器、遥测三个应用任务。 |
 | `RobotApp_DefaultTask()` | CubeMX 默认后台任务，目前只低频休眠，预留给不影响实时控制的后台功能。 |
@@ -420,10 +455,12 @@ buf[6]       CRC8，校验 buf[0] 到 buf[5]
 ## 14. 调试时建议重点观察的字段
 
 - `STATE=FAULT`：表示有保护条件，不要直接强行给大 PWM。
+- `FAULT=0x0001`：USART1 运动命令超时；仅正式 KICKPI 版本默认启用，当前 UART1
+  文本调试版已经关闭，避免手动单次发送命令后误进入故障。
 - `FAULT=0x0002`：低电压故障，INA219 未供电或读数不正确时会出现。
 - `SENS flags=0x000D`：INA219、MPU6050、DS18B20 有效，DHT30 无效。
 - `SENS flags=0x000F`：四种传感器都成功读到数据。
-- `RELAY=1/0`：当前软件判断的继电器实际请求状态，包含 5 秒测试状态。
+- `RELAY=0`：当前继电器功能被关闭，PB1 始终为低电平。
 - `RXOV`：UART1 接收溢出次数；持续增加时要降低发送频率或检查串口配置。
 
 ## 7. 第一次上电测试顺序

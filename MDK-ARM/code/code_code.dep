@@ -1,7 +1,7 @@
 Dependencies for Project 'code', Target 'code': (DO NOT MODIFY !)
 CompilerVersion: 5060960::V5.06 update 7 (build 960)::.\ARM_Compiler_5.06u7
 F (startup_stm32f103xb.s)(0x6A8EFBD5)(--cpu Cortex-M3 -g --apcs=interwork -I ../Core/Inc -I ../Drivers/STM32F1xx_HAL_Driver/Inc -I ../Drivers/STM32F1xx_HAL_Driver/Inc/Legacy -I ../Middlewares/Third_Party/FreeRTOS/Source/include -I ../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2 -I ../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM3 -I ../Drivers/CMSIS/Device/ST/STM32F1xx/Include -I ../Drivers/CMSIS/Include-I.\RTE\_code-ID:\Keil_v5\ARM\Packs\ARM\CMSIS\6.2.0\CMSIS\Core\Include-ID:\Keil_v5\ARM\Packs\Keil\STM32F1xx_DFP\2.4.1\Device\Include--pd "__UVISION_VERSION SETA 543" --pd "STM32F10X_MD SETA 1" --pd "_RTE_ SETA 1"--list startup_stm32f103xb.lst --xref -o code\startup_stm32f103xb.o --depend code\startup_stm32f103xb.d)
-F (../Core/Src/robot_app.c)(0x6A90149B)(--c99 -c --cpu Cortex-M3 -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32F1xx_HAL_Driver/Inc -I ../Drivers/STM32F1xx_HAL_Driver/Inc/Legacy -I ../Middlewares/Third_Party/FreeRTOS/Source/include -I ../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM3 -I ../Drivers/CMSIS/Device/ST/STM32F1xx/Include -I ../Drivers/CMSIS/Include -I ../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2-I.\RTE\_code-ID:\Keil_v5\ARM\Packs\ARM\CMSIS\6.2.0\CMSIS\Core\Include-ID:\Keil_v5\ARM\Packs\Keil\STM32F1xx_DFP\2.4.1\Device\Include-D__UVISION_VERSION="543" -DSTM32F10X_MD -D_RTE_ -DUSE_HAL_DRIVER -DSTM32F103xB-o code\robot_app.o --omf_browse code\robot_app.crf --depend code\robot_app.d)
+F (../Core/Src/robot_app.c)(0x6A918810)(--c99 -c --cpu Cortex-M3 -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32F1xx_HAL_Driver/Inc -I ../Drivers/STM32F1xx_HAL_Driver/Inc/Legacy -I ../Middlewares/Third_Party/FreeRTOS/Source/include -I ../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM3 -I ../Drivers/CMSIS/Device/ST/STM32F1xx/Include -I ../Drivers/CMSIS/Include -I ../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2-I.\RTE\_code-ID:\Keil_v5\ARM\Packs\ARM\CMSIS\6.2.0\CMSIS\Core\Include-ID:\Keil_v5\ARM\Packs\Keil\STM32F1xx_DFP\2.4.1\Device\Include-D__UVISION_VERSION="543" -DSTM32F10X_MD -D_RTE_ -DUSE_HAL_DRIVER -DSTM32F103xB-o code\robot_app.o --omf_browse code\robot_app.crf --depend code\robot_app.d)
 I (../Core/Inc/robot_app.h)(0x6A9002D0)
 I (D:\Keil_v5\ARM\ARM_Compiler_5.06u7\include\stdint.h)(0x5E8E3CC2)
 I (../Core/Inc/robot_encoder.h)(0x6A9002D0)
@@ -35,7 +35,7 @@ I (../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_tim.h)(0x6A202F64)
 I (../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_tim_ex.h)(0x6A202F64)
 I (../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_uart.h)(0x6A202F64)
 I (../Core/Inc/robot_comm.h)(0x6A9002D0)
-I (../Core/Inc/robot_config.h)(0x6A90146F)
+I (../Core/Inc/robot_config.h)(0x6A9186FC)
 I (../Core/Inc/robot_delay.h)(0x6A9002D0)
 I (../Core/Inc/robot_motor.h)(0x6A9002D0)
 I (../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/cmsis_os.h)(0x6A202F6C)
@@ -81,7 +81,7 @@ I (../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_pwr.h)(0x6A202F64)
 I (../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_tim.h)(0x6A202F64)
 I (../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_tim_ex.h)(0x6A202F64)
 I (../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_uart.h)(0x6A202F64)
-I (../Core/Inc/robot_config.h)(0x6A90146F)
+I (../Core/Inc/robot_config.h)(0x6A9186FC)
 I (../Core/Inc/usart.h)(0x6A8EDF4C)
 I (../Core/Inc/main.h)(0x6A8EDF4E)
 I (D:\Keil_v5\ARM\ARM_Compiler_5.06u7\include\stdarg.h)(0x5E8E3CC2)
@@ -120,7 +120,7 @@ I (../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_uart.h)(0x6A202F64)
 F (../Core/Src/robot_encoder.c)(0x6A90048E)(--c99 -c --cpu Cortex-M3 -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32F1xx_HAL_Driver/Inc -I ../Drivers/STM32F1xx_HAL_Driver/Inc/Legacy -I ../Middlewares/Third_Party/FreeRTOS/Source/include -I ../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM3 -I ../Drivers/CMSIS/Device/ST/STM32F1xx/Include -I ../Drivers/CMSIS/Include -I ../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2-I.\RTE\_code-ID:\Keil_v5\ARM\Packs\ARM\CMSIS\6.2.0\CMSIS\Core\Include-ID:\Keil_v5\ARM\Packs\Keil\STM32F1xx_DFP\2.4.1\Device\Include-D__UVISION_VERSION="543" -DSTM32F10X_MD -D_RTE_ -DUSE_HAL_DRIVER -DSTM32F103xB-o code\robot_encoder.o --omf_browse code\robot_encoder.crf --depend code\robot_encoder.d)
 I (../Core/Inc/robot_encoder.h)(0x6A9002D0)
 I (D:\Keil_v5\ARM\ARM_Compiler_5.06u7\include\stdint.h)(0x5E8E3CC2)
-I (../Core/Inc/robot_config.h)(0x6A90146F)
+I (../Core/Inc/robot_config.h)(0x6A9186FC)
 I (../Core/Inc/tim.h)(0x6A8EDF4C)
 I (../Core/Inc/main.h)(0x6A8EDF4E)
 I (../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal.h)(0x6A202F64)
@@ -181,7 +181,7 @@ I (../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_pwr.h)(0x6A202F64)
 I (../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_tim.h)(0x6A202F64)
 I (../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_tim_ex.h)(0x6A202F64)
 I (../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_uart.h)(0x6A202F64)
-I (../Core/Inc/robot_config.h)(0x6A90146F)
+I (../Core/Inc/robot_config.h)(0x6A9186FC)
 I (../Core/Inc/tim.h)(0x6A8EDF4C)
 F (../Core/Src/robot_sensors.c)(0x6A9016AE)(--c99 -c --cpu Cortex-M3 -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32F1xx_HAL_Driver/Inc -I ../Drivers/STM32F1xx_HAL_Driver/Inc/Legacy -I ../Middlewares/Third_Party/FreeRTOS/Source/include -I ../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM3 -I ../Drivers/CMSIS/Device/ST/STM32F1xx/Include -I ../Drivers/CMSIS/Include -I ../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2-I.\RTE\_code-ID:\Keil_v5\ARM\Packs\ARM\CMSIS\6.2.0\CMSIS\Core\Include-ID:\Keil_v5\ARM\Packs\Keil\STM32F1xx_DFP\2.4.1\Device\Include-D__UVISION_VERSION="543" -DSTM32F10X_MD -D_RTE_ -DUSE_HAL_DRIVER -DSTM32F103xB-o code\robot_sensors.o --omf_browse code\robot_sensors.crf --depend code\robot_sensors.d)
 I (../Core/Inc/robot_sensors.h)(0x6A9002D0)
@@ -215,7 +215,7 @@ I (../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_pwr.h)(0x6A202F64)
 I (../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_tim.h)(0x6A202F64)
 I (../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_tim_ex.h)(0x6A202F64)
 I (../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_uart.h)(0x6A202F64)
-I (../Core/Inc/robot_config.h)(0x6A90146F)
+I (../Core/Inc/robot_config.h)(0x6A9186FC)
 I (../Core/Inc/robot_delay.h)(0x6A9002D0)
 I (../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/cmsis_os.h)(0x6A202F6C)
 I (../Middlewares/Third_Party/FreeRTOS/Source/include/FreeRTOS.h)(0x6A202F6C)
@@ -229,7 +229,7 @@ I (../Middlewares/Third_Party/FreeRTOS/Source/include/task.h)(0x6A202F6C)
 I (../Middlewares/Third_Party/FreeRTOS/Source/include/list.h)(0x6A202F6C)
 I (../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/cmsis_os2.h)(0x6A202F6C)
 I (D:\Keil_v5\ARM\ARM_Compiler_5.06u7\include\string.h)(0x5E8E3CC2)
-F (../Core/Src/main.c)(0x6A8EFBD3)(--c99 -c --cpu Cortex-M3 -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32F1xx_HAL_Driver/Inc -I ../Drivers/STM32F1xx_HAL_Driver/Inc/Legacy -I ../Middlewares/Third_Party/FreeRTOS/Source/include -I ../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM3 -I ../Drivers/CMSIS/Device/ST/STM32F1xx/Include -I ../Drivers/CMSIS/Include -I ../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2-I.\RTE\_code-ID:\Keil_v5\ARM\Packs\ARM\CMSIS\6.2.0\CMSIS\Core\Include-ID:\Keil_v5\ARM\Packs\Keil\STM32F1xx_DFP\2.4.1\Device\Include-D__UVISION_VERSION="543" -DSTM32F10X_MD -D_RTE_ -DUSE_HAL_DRIVER -DSTM32F103xB-o code\main.o --omf_browse code\main.crf --depend code\main.d)
+F (../Core/Src/main.c)(0x6A917647)(--c99 -c --cpu Cortex-M3 -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32F1xx_HAL_Driver/Inc -I ../Drivers/STM32F1xx_HAL_Driver/Inc/Legacy -I ../Middlewares/Third_Party/FreeRTOS/Source/include -I ../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM3 -I ../Drivers/CMSIS/Device/ST/STM32F1xx/Include -I ../Drivers/CMSIS/Include -I ../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2-I.\RTE\_code-ID:\Keil_v5\ARM\Packs\ARM\CMSIS\6.2.0\CMSIS\Core\Include-ID:\Keil_v5\ARM\Packs\Keil\STM32F1xx_DFP\2.4.1\Device\Include-D__UVISION_VERSION="543" -DSTM32F10X_MD -D_RTE_ -DUSE_HAL_DRIVER -DSTM32F103xB-o code\main.o --omf_browse code\main.crf --depend code\main.d)
 I (../Core/Inc/main.h)(0x6A8EDF4E)
 I (../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal.h)(0x6A202F64)
 I (../Core/Inc/stm32f1xx_hal_conf.h)(0x6A8EDF4E)
@@ -277,6 +277,7 @@ I (../Core/Inc/gpio.h)(0x6A8EBB27)
 I (../Core/Inc/robot_app.h)(0x6A9002D0)
 I (../Core/Inc/robot_encoder.h)(0x6A9002D0)
 I (../Core/Inc/robot_sensors.h)(0x6A9002D0)
+I (../Core/Inc/robot_config.h)(0x6A9186FC)
 F (../Core/Src/gpio.c)(0x6A8EDF47)(--c99 -c --cpu Cortex-M3 -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32F1xx_HAL_Driver/Inc -I ../Drivers/STM32F1xx_HAL_Driver/Inc/Legacy -I ../Middlewares/Third_Party/FreeRTOS/Source/include -I ../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM3 -I ../Drivers/CMSIS/Device/ST/STM32F1xx/Include -I ../Drivers/CMSIS/Include -I ../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2-I.\RTE\_code-ID:\Keil_v5\ARM\Packs\ARM\CMSIS\6.2.0\CMSIS\Core\Include-ID:\Keil_v5\ARM\Packs\Keil\STM32F1xx_DFP\2.4.1\Device\Include-D__UVISION_VERSION="543" -DSTM32F10X_MD -D_RTE_ -DUSE_HAL_DRIVER -DSTM32F103xB-o code\gpio.o --omf_browse code\gpio.crf --depend code\gpio.d)
 I (../Core/Inc/gpio.h)(0x6A8EBB27)
 I (../Core/Inc/main.h)(0x6A8EDF4E)

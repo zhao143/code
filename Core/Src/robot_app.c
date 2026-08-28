@@ -39,6 +39,15 @@ typedef struct
   uint8_t relay_test_on;
   uint32_t relay_test_last_ms;
   uint8_t buzzer_on;
+#if ROBOT_UART1_DEBUG_ONLY && ROBOT_MOTOR_AUTO_TEST_ENABLE
+  uint8_t auto_test_active;
+  uint8_t auto_test_stage;
+  uint8_t auto_test_a_pass;
+  uint8_t auto_test_b_pass;
+  uint32_t auto_test_stage_start_ms;
+  int32_t auto_test_encoder_baseline_a;
+  int32_t auto_test_encoder_baseline_b;
+#endif
   RobotEncoderData_t encoder;
   RobotSensorsData_t sensors;
 } RobotAppContext_t;
@@ -76,6 +85,10 @@ static void RobotApp_ControlTask(void *argument);
 static void RobotApp_SensorTask(void *argument);
 static void RobotApp_TelemetryTask(void *argument);
 static void send_status(void);
+#if ROBOT_UART1_DEBUG_ONLY && ROBOT_MOTOR_AUTO_TEST_ENABLE
+static void auto_test_cancel(void);
+static void auto_test_step(uint32_t now);
+#endif
 #if ROBOT_UART1_DEBUG_ONLY
 static void RobotApp_OnDebugLine(const char *line);
 #else
@@ -119,6 +132,199 @@ static int32_t clamp_i32(int32_t value, int32_t min_value, int32_t max_value)
   }
   return value;
 }
+
+#if ROBOT_UART1_DEBUG_ONLY && ROBOT_MOTOR_AUTO_TEST_ENABLE
+/*
+ * 上电自动测试的阶段编号。
+ *
+ * DELAY 给调试人员留出确认车轮悬空的时间；A_RUN 和 B_RUN 只驱动一个电机
+ * 通道；两个 PAUSE 阶段在切换通道前彻底停机；DONE 表示测试完成，之后恢复
+ * 正常的手动串口控制。
+ */
+typedef enum
+{
+  ROBOT_AUTO_TEST_DELAY = 0,
+  ROBOT_AUTO_TEST_A_RUN,
+  ROBOT_AUTO_TEST_A_PAUSE,
+  ROBOT_AUTO_TEST_B_RUN,
+  ROBOT_AUTO_TEST_B_PAUSE,
+  ROBOT_AUTO_TEST_DONE
+} RobotAutoTestStage_t;
+
+/*
+ * 返回 32 位有符号数的绝对值。
+ *
+ * 自动测试只运行几秒，编码器累计值不会接近 int32_t 的边界，因此这里只用
+ * 简单的绝对值来比较测试前后的计数变化。
+ */
+static int32_t auto_test_abs_i32(int32_t value)
+{
+  return (value < 0) ? -value : value;
+}
+
+/*
+ * 进入自动测试的新阶段，并准备本阶段的目标值和编码器基准值。
+ *
+ * 目标仍然写入 s_ctx，真正的 GPIO/PWM 输出继续由 control_step() 统一完成，
+ * 这样自动测试和手动命令走的是同一套电机控制路径。
+ */
+static void auto_test_enter_stage(RobotAutoTestStage_t stage, uint32_t now)
+{
+  int32_t delta;
+
+  s_ctx.auto_test_stage = (uint8_t)stage;
+  s_ctx.auto_test_stage_start_ms = now;
+
+  if (stage == ROBOT_AUTO_TEST_DELAY)
+  {
+    s_ctx.target_a = 0;
+    s_ctx.target_b = 0;
+    s_ctx.state = ROBOT_APP_STATE_READY;
+    return;
+  }
+
+  if (stage == ROBOT_AUTO_TEST_A_RUN)
+  {
+    s_ctx.auto_test_encoder_baseline_a = s_ctx.encoder.total_a;
+    s_ctx.target_a = ROBOT_MOTOR_AUTO_TEST_PWM;
+    s_ctx.target_b = 0;
+    s_ctx.motion_mode = ROBOT_MOTION_MODE_PWM;
+    s_ctx.command_seen = 0U;
+    s_ctx.state = (s_ctx.faults == 0U) ? ROBOT_APP_STATE_RUN : ROBOT_APP_STATE_FAULT;
+    RobotComm_DebugPrintf("AUTO_TEST A_RUN TARGET[A=%d B=0] duration=%lums\r\n",
+                          ROBOT_MOTOR_AUTO_TEST_PWM,
+                          (unsigned long)ROBOT_MOTOR_AUTO_TEST_RUN_MS);
+    return;
+  }
+
+  if (stage == ROBOT_AUTO_TEST_A_PAUSE)
+  {
+    delta = auto_test_abs_i32(s_ctx.encoder.total_a - s_ctx.auto_test_encoder_baseline_a);
+    s_ctx.auto_test_a_pass = (delta >= ROBOT_MOTOR_AUTO_TEST_MIN_ENCODER_DELTA) ? 1U : 0U;
+    s_ctx.target_a = 0;
+    s_ctx.target_b = 0;
+    s_ctx.state = ROBOT_APP_STATE_READY;
+    RobotComm_DebugPrintf("AUTO_TEST A_RESULT ENC_DELTA=%ld RESULT=%s\r\n",
+                          (long)delta,
+                          s_ctx.auto_test_a_pass ? "PASS" : "FAIL");
+    return;
+  }
+
+  if (stage == ROBOT_AUTO_TEST_B_RUN)
+  {
+    s_ctx.auto_test_encoder_baseline_b = s_ctx.encoder.total_b;
+    s_ctx.target_a = 0;
+    s_ctx.target_b = ROBOT_MOTOR_AUTO_TEST_PWM;
+    s_ctx.motion_mode = ROBOT_MOTION_MODE_PWM;
+    s_ctx.command_seen = 0U;
+    s_ctx.state = (s_ctx.faults == 0U) ? ROBOT_APP_STATE_RUN : ROBOT_APP_STATE_FAULT;
+    RobotComm_DebugPrintf("AUTO_TEST B_RUN TARGET[A=0 B=%d] duration=%lums\r\n",
+                          ROBOT_MOTOR_AUTO_TEST_PWM,
+                          (unsigned long)ROBOT_MOTOR_AUTO_TEST_RUN_MS);
+    return;
+  }
+
+  if (stage == ROBOT_AUTO_TEST_B_PAUSE)
+  {
+    delta = auto_test_abs_i32(s_ctx.encoder.total_b - s_ctx.auto_test_encoder_baseline_b);
+    s_ctx.auto_test_b_pass = (delta >= ROBOT_MOTOR_AUTO_TEST_MIN_ENCODER_DELTA) ? 1U : 0U;
+    s_ctx.target_a = 0;
+    s_ctx.target_b = 0;
+    s_ctx.state = ROBOT_APP_STATE_READY;
+    RobotComm_DebugPrintf("AUTO_TEST B_RESULT ENC_DELTA=%ld RESULT=%s\r\n",
+                          (long)delta,
+                          s_ctx.auto_test_b_pass ? "PASS" : "FAIL");
+    return;
+  }
+
+  s_ctx.target_a = 0;
+  s_ctx.target_b = 0;
+  s_ctx.state = ROBOT_APP_STATE_READY;
+  s_ctx.auto_test_active = 0U;
+  RobotComm_DebugPrintf("AUTO_TEST DONE A=%s B=%s\r\n",
+                        s_ctx.auto_test_a_pass ? "PASS" : "FAIL",
+                        s_ctx.auto_test_b_pass ? "PASS" : "FAIL");
+}
+
+/*
+ * 取消上电自动测试。
+ *
+ * 手动发送 pwm、speed、stop 或 clear 时调用，防止自动测试下一周期又把手动
+ * 指令覆盖掉。取消后不主动清除已有故障，只把电机目标清零。
+ */
+static void auto_test_cancel(void)
+{
+  if (s_ctx.auto_test_active != 0U)
+  {
+    s_ctx.auto_test_active = 0U;
+    s_ctx.auto_test_stage = ROBOT_AUTO_TEST_DONE;
+    s_ctx.target_a = 0;
+    s_ctx.target_b = 0;
+    s_ctx.state = ROBOT_APP_STATE_SAFE_IDLE;
+    RobotComm_DebugPrintf("AUTO_TEST CANCELED\r\n");
+  }
+}
+
+/*
+ * 每 10ms 推进一次自动测试状态机。
+ *
+ * 该函数只改变阶段和目标值，不直接写定时器寄存器；实际输出仍由后面的
+ * control_step() 统一完成。编码器增量由阶段开始和结束时的累计值之差得到。
+ */
+static void auto_test_step(uint32_t now)
+{
+  uint32_t elapsed;
+
+  if (s_ctx.auto_test_active == 0U)
+  {
+    return;
+  }
+
+  elapsed = (uint32_t)(now - s_ctx.auto_test_stage_start_ms);
+
+  switch ((RobotAutoTestStage_t)s_ctx.auto_test_stage)
+  {
+    case ROBOT_AUTO_TEST_DELAY:
+      if (elapsed >= ROBOT_MOTOR_AUTO_TEST_START_DELAY_MS)
+      {
+        auto_test_enter_stage(ROBOT_AUTO_TEST_A_RUN, now);
+      }
+      break;
+
+    case ROBOT_AUTO_TEST_A_RUN:
+      if (elapsed >= ROBOT_MOTOR_AUTO_TEST_RUN_MS)
+      {
+        auto_test_enter_stage(ROBOT_AUTO_TEST_A_PAUSE, now);
+      }
+      break;
+
+    case ROBOT_AUTO_TEST_A_PAUSE:
+      if (elapsed >= ROBOT_MOTOR_AUTO_TEST_PAUSE_MS)
+      {
+        auto_test_enter_stage(ROBOT_AUTO_TEST_B_RUN, now);
+      }
+      break;
+
+    case ROBOT_AUTO_TEST_B_RUN:
+      if (elapsed >= ROBOT_MOTOR_AUTO_TEST_RUN_MS)
+      {
+        auto_test_enter_stage(ROBOT_AUTO_TEST_B_PAUSE, now);
+      }
+      break;
+
+    case ROBOT_AUTO_TEST_B_PAUSE:
+      if (elapsed >= ROBOT_MOTOR_AUTO_TEST_PAUSE_MS)
+      {
+        auto_test_enter_stage(ROBOT_AUTO_TEST_DONE, now);
+      }
+      break;
+
+    default:
+      s_ctx.auto_test_active = 0U;
+      break;
+  }
+}
+#endif
 
 #if !ROBOT_UART1_DEBUG_ONLY
 /*
@@ -198,16 +404,18 @@ static void ctx_unlock(void)
 }
 
 /*
- * 根据传感器、故障和手动命令更新继电器与蜂鸣器输出。
+ * 根据传感器、故障和手动命令更新附加输出。
  *
- * 风扇采用 DS18B20 温度的上下阈值滞回，避免温度在临界点附近抖动导致继电器
- * 频繁吸合。蜂鸣器受 ROBOT_BUZZER_ENABLE 编译宏控制，当前调试阶段强制关闭。
+ * 当前版本按用户要求关闭蜂鸣器和继电器：蜂鸣器 PB0、继电器 PB1 始终为低电平，
+ * 不会因为故障、温度或串口命令而动作。保留下面的条件编译结构，是为了以后
+ * 重新装上对应硬件时，只修改 robot_config.h 的开关即可恢复相关逻辑。
  */
 static void apply_outputs(uint32_t now)
 {
   uint8_t buzzer_on = 0U;
   uint8_t fan_on;
 
+#if ROBOT_RELAY_ENABLE
 #if ROBOT_RELAY_TEST_ENABLE
   /*
    * 继电器调试模式：按固定周期翻转测试状态。这个状态只作为一个“请求打开”
@@ -240,6 +448,14 @@ static void apply_outputs(uint32_t now)
   fan_on = (uint8_t)((s_ctx.manual_fan != 0U) || (s_ctx.auto_fan != 0U) ||
                      (s_ctx.relay_test_on != 0U) ||
                      ((s_ctx.faults & ROBOT_FAULT_OVER_TEMP) != 0U));
+#else
+  /* 当前不使用继电器，手动风扇、自动风扇和测试状态全部强制清零。 */
+  (void)now;
+  s_ctx.manual_fan = 0U;
+  s_ctx.auto_fan = 0U;
+  s_ctx.relay_test_on = 0U;
+  fan_on = 0U;
+#endif
 
 #if ROBOT_BUZZER_ENABLE
   /*
@@ -273,14 +489,18 @@ static void apply_outputs(uint32_t now)
 static void update_faults(uint32_t now)
 {
   /*
-   * 机器人处于运行状态时必须持续收到运动命令。如果 USB 转串口线松动、串口
-   * 终端关闭，或者以后 KICKPI/ROS2 节点崩溃，超时后就进入 FAULT 并停止电机。
+   * 正式 KICKPI 通信时，机器人处于运行状态必须持续收到运动命令。如果 USB
+   * 转串口线松动、串口终端关闭，或者 KICKPI/ROS2 节点崩溃，超时后就进入
+   * FAULT 并停止电机。UART1 文本调试模式默认关闭这项检查，因为串口助手
+   * 的 pwm/speed 命令是手动单次发送的，不能要求用户持续重复发送。
    */
+#if !ROBOT_UART1_DEBUG_ONLY || ROBOT_DEBUG_MOTION_TIMEOUT_ENABLE
   if (s_ctx.state == ROBOT_APP_STATE_RUN && s_ctx.command_seen != 0U &&
       (uint32_t)(now - s_ctx.last_cmd_ms) > ROBOT_CMD_TIMEOUT_MS)
   {
     s_ctx.faults |= ROBOT_FAULT_COMM_TIMEOUT;
   }
+#endif
 
   /*
    * INA219 当前只作为电池电压监测器使用。低电压故障只有在电压升到恢复阈值
@@ -391,6 +611,10 @@ static void control_step(void)
    */
   RobotEncoder_Sample(ROBOT_CONTROL_PERIOD_MS, &s_ctx.encoder);
   RobotSensors_Get(&s_ctx.sensors);
+
+#if ROBOT_UART1_DEBUG_ONLY && ROBOT_MOTOR_AUTO_TEST_ENABLE
+  auto_test_step(now);
+#endif
 
   update_faults(now);
 
@@ -681,13 +905,14 @@ static void handle_set_state(const RobotCommFrame_t *frame)
 }
 
 /*
- * 处理正式模式下的继电器和蜂鸣器手动控制命令。
+ * 处理正式模式下的附加输出命令。
  *
- * 当前调试固件关闭蜂鸣器；正式模式打开蜂鸣器宏后，第 0 字节控制蜂鸣器，
- * 第 1 字节控制风扇继电器。
+ * 当前蜂鸣器和继电器都被配置为关闭，所以即使 KICKPI 发送 SET_OUTPUT，
+ * 也只会被安全忽略，不会改变 PB0/PB1 的输出状态。
  */
 static void handle_set_output(const RobotCommFrame_t *frame)
 {
+#if ROBOT_BUZZER_ENABLE || ROBOT_RELAY_ENABLE
   if (frame->length < 2U)
   {
     return;
@@ -695,6 +920,11 @@ static void handle_set_output(const RobotCommFrame_t *frame)
 
   s_ctx.manual_buzzer = frame->payload[0] ? 1U : 0U;
   s_ctx.manual_fan = frame->payload[1] ? 1U : 0U;
+#else
+  (void)frame;
+  s_ctx.manual_buzzer = 0U;
+  s_ctx.manual_fan = 0U;
+#endif
 }
 
 /*
@@ -745,13 +975,17 @@ static void debug_print_help(void)
   RobotComm_DebugPrintf("\r\nRobot base UART1 debug mode\r\n");
   RobotComm_DebugPrintf("Commands: help | status | enable | stop | clear | estop\r\n");
   RobotComm_DebugPrintf("          pwm <A -1000..1000> <B -1000..1000>\r\n");
-  RobotComm_DebugPrintf("          speed <A mm/s> <B mm/s> | relay <0|1>\r\n");
+  RobotComm_DebugPrintf("          speed <A mm/s> <B mm/s>\r\n");
   RobotComm_DebugPrintf("Buzzer is disabled by ROBOT_BUZZER_ENABLE=0.\r\n");
+#if ROBOT_RELAY_ENABLE
 #if ROBOT_RELAY_TEST_ENABLE
   RobotComm_DebugPrintf("Relay test is enabled: toggle every %lu ms.\r\n",
                         (unsigned long)ROBOT_RELAY_TEST_PERIOD_MS);
 #else
   RobotComm_DebugPrintf("Relay test is disabled.\r\n");
+#endif
+#else
+  RobotComm_DebugPrintf("Relay/fan output is disabled by ROBOT_RELAY_ENABLE=0.\r\n");
 #endif
   RobotComm_DebugPrintf("\r\n");
 }
@@ -767,6 +1001,10 @@ static void debug_print_help(void)
 static void debug_set_motion(int32_t motor_a, int32_t motor_b, uint8_t mode)
 {
   ctx_lock();
+
+#if ROBOT_MOTOR_AUTO_TEST_ENABLE
+  auto_test_cancel();
+#endif
 
   if (mode == ROBOT_MOTION_MODE_PWM)
   {
@@ -804,6 +1042,9 @@ static void debug_set_motion(int32_t motor_a, int32_t motor_b, uint8_t mode)
 static void debug_stop(void)
 {
   ctx_lock();
+#if ROBOT_MOTOR_AUTO_TEST_ENABLE
+  auto_test_cancel();
+#endif
   s_ctx.target_a = 0;
   s_ctx.target_b = 0;
   s_ctx.command_seen = 0U;
@@ -822,6 +1063,9 @@ static void debug_stop(void)
 static void debug_clear_fault(void)
 {
   ctx_lock();
+#if ROBOT_MOTOR_AUTO_TEST_ENABLE
+  auto_test_cancel();
+#endif
   s_ctx.faults = 0U;
   s_ctx.target_a = 0;
   s_ctx.target_b = 0;
@@ -832,6 +1076,7 @@ static void debug_clear_fault(void)
   RobotComm_DebugPrintf("OK clear faults\r\n");
 }
 
+#if ROBOT_RELAY_ENABLE
 /*
  * 手动控制风扇继电器。
  *
@@ -847,6 +1092,7 @@ static void debug_set_relay(int32_t value)
 
   RobotComm_DebugPrintf("OK relay=%d\r\n", (value != 0) ? 1 : 0);
 }
+#endif
 
 /*
  * 处理一整行底板调试命令。
@@ -889,6 +1135,9 @@ static void RobotApp_OnDebugLine(const char *line)
   else if (strcmp(line, "estop") == 0)
   {
     ctx_lock();
+#if ROBOT_MOTOR_AUTO_TEST_ENABLE
+    auto_test_cancel();
+#endif
     s_ctx.faults |= ROBOT_FAULT_ESTOP;
     s_ctx.state = ROBOT_APP_STATE_FAULT;
     ctx_unlock();
@@ -902,10 +1151,18 @@ static void RobotApp_OnDebugLine(const char *line)
   {
     debug_set_motion(motor_a, motor_b, ROBOT_MOTION_MODE_SPEED);
   }
+#if ROBOT_RELAY_ENABLE
   else if (sscanf(line, "relay %d", &value) == 1)
   {
     debug_set_relay(value);
   }
+#else
+  else if (sscanf(line, "relay %d", &value) == 1)
+  {
+    (void)value;
+    RobotComm_DebugPrintf("IGNORED relay disabled by ROBOT_RELAY_ENABLE=0\r\n");
+  }
+#endif
   else if (sscanf(line, "beep %d", &value) == 1)
   {
     (void)value;
@@ -922,8 +1179,8 @@ static void RobotApp_OnDebugLine(const char *line)
 /*
  * 初始化机器人底板应用层。
  *
- * 调用时机：main.c 已经完成 HAL、GPIO、I2C、TIM1、TIM2、TIM4、USART1、
- * USART2 初始化之后，但 FreeRTOS 还没有启动。
+ * 调用时机：main.c 已经完成 HAL、GPIO、I2C、TIM1、TIM2、TIM4 和 USART1
+ * 初始化之后，但 FreeRTOS 还没有启动。USART2 只有在蓝牙开关打开时才初始化。
  *
  * 初始化顺序：
  * 1. 打开 DWT 微秒延时；
@@ -940,6 +1197,16 @@ void RobotApp_BoardInit(void)
   s_ctx.state = ROBOT_APP_STATE_SAFE_IDLE;
   s_ctx.motion_mode = ROBOT_MOTION_MODE_PWM;
 
+#if ROBOT_UART1_DEBUG_ONLY && ROBOT_MOTOR_AUTO_TEST_ENABLE
+  /*
+   * 调试版上电自动测试从安全等待阶段开始。此时目标 PWM 为 0，给操作者
+   * 留出一秒钟确认车轮悬空；进入控制任务后才会真正驱动 A/B 通道。
+   */
+  s_ctx.auto_test_active = 1U;
+  s_ctx.auto_test_stage = ROBOT_AUTO_TEST_DELAY;
+  s_ctx.auto_test_stage_start_ms = HAL_GetTick();
+#endif
+
   RobotDelay_Init();
   RobotMotor_Init();
   RobotEncoder_Init();
@@ -948,6 +1215,9 @@ void RobotApp_BoardInit(void)
 
 #if ROBOT_UART1_DEBUG_ONLY
   debug_print_help();
+#if ROBOT_MOTOR_AUTO_TEST_ENABLE
+  RobotComm_DebugPrintf("AUTO_TEST scheduled: A then B, wheel must be lifted.\r\n");
+#endif
 #endif
 }
 
@@ -1050,9 +1320,13 @@ void RobotApp_GetStatus(RobotAppStatus_t *out)
   out->target_b = s_ctx.target_b;
   out->pwm_a = s_ctx.pwm_a;
   out->pwm_b = s_ctx.pwm_b;
+#if ROBOT_RELAY_ENABLE
   out->fan_on = (uint8_t)((s_ctx.manual_fan != 0U) || (s_ctx.auto_fan != 0U) ||
                           (s_ctx.relay_test_on != 0U) ||
                           ((s_ctx.faults & ROBOT_FAULT_OVER_TEMP) != 0U));
+#else
+  out->fan_on = 0U;
+#endif
   out->buzzer_on = s_ctx.buzzer_on;
   out->encoder = s_ctx.encoder;
   out->sensors = s_ctx.sensors;

@@ -20,6 +20,16 @@
 #define ROBOT_UART1_DEBUG_ONLY                1
 
 /*
+ * 本版本的未使用外设开关。
+ *
+ * 你的当前目标是先把底板的电机、编码器、传感器和 USART1 调试功能跑通，
+ * 暂时不使用蜂鸣器、继电器/风扇和蓝牙。因此这里采用“硬关闭”而不是只
+ * 不接线：代码不会主动驱动这些输出，也不会初始化蓝牙串口。
+ */
+#define ROBOT_RELAY_ENABLE                    0
+#define ROBOT_BLUETOOTH_ENABLE                0
+
+/*
  * 蜂鸣器总开关。
  *
  * 0：蜂鸣器永远不响。即使发生低电压、过温、急停、串口超时等故障，程序
@@ -34,15 +44,12 @@
 /*
  * 继电器调试翻转开关。
  *
- * 1：当前硬件调试阶段启用。继电器初始保持关闭，运行后每隔
- *    ROBOT_RELAY_TEST_PERIOD_MS 翻转一次，便于确认 PB1、驱动三极管、继电器
- *    线圈和风扇输出接线是否正常。
- * 0：关闭自动翻转，继电器只接受 relay 命令和温度自动控制。
+ * 1：允许继电器/风扇相关逻辑参与运行。
+ * 0：彻底关闭继电器/风扇逻辑，PB1 始终输出低电平。
  *
- * 注意：正式装车或连接风扇后建议改为 0，重新编译烧录。即使该调试功能打开，
- * 过温自动开风扇仍然优先，继电器不会因为测试翻转而绕过过温保护。
+ * 当 ROBOT_RELAY_ENABLE=0 时，本开关不会生效，PB1 仍然始终保持低电平。
  */
-#define ROBOT_RELAY_TEST_ENABLE               1
+#define ROBOT_RELAY_TEST_ENABLE               0
 #define ROBOT_RELAY_TEST_PERIOD_MS            5000U
 
 /*
@@ -65,6 +72,33 @@
 #define ROBOT_SENSOR_SLOW_PERIOD_MS           1000U
 #define ROBOT_TELEMETRY_PERIOD_MS             500U
 #define ROBOT_CMD_TIMEOUT_MS                  700U
+
+/*
+ * 调试模式下是否启用运动命令超时保护。
+ *
+ * 串口助手发送的 pwm/speed 命令通常是一条一条手动发送的，不会像 KICKPI
+ * 那样每隔几十毫秒持续发送。如果调试模式也启用 700ms 超时，单条测试命令
+ * 会在不到 1 秒后被误判为通信中断，状态进入 FAULT，后续 pwm 0 0 和 speed
+ * 命令看起来就像“没有反应”。因此当前调试版关闭该保护，电机由 stop、
+ * pwm 0 0 或 clear 命令停止；正式 KICKPI 版本仍然保留超时保护。
+ */
+#define ROBOT_DEBUG_MOTION_TIMEOUT_ENABLE     0
+
+/*
+ * UART1 调试版上电自动电机测试。
+ *
+ * 1：上电后自动依次测试 A、B 两个电机通道，并在 UART1 打印编码器反馈；
+ * 0：关闭自动测试，恢复完全手动的 pwm/speed 命令调试方式。
+ *
+ * 自动测试只适合当前底板调试阶段。测试时必须让车轮悬空，避免上电后小车
+ * 自己移动。收到任意 pwm、speed、stop 或 clear 命令后，自动测试会取消。
+ */
+#define ROBOT_MOTOR_AUTO_TEST_ENABLE           1
+#define ROBOT_MOTOR_AUTO_TEST_PWM              100
+#define ROBOT_MOTOR_AUTO_TEST_START_DELAY_MS   1000U
+#define ROBOT_MOTOR_AUTO_TEST_RUN_MS           3000U
+#define ROBOT_MOTOR_AUTO_TEST_PAUSE_MS         1000U
+#define ROBOT_MOTOR_AUTO_TEST_MIN_ENCODER_DELTA 5
 
 #define ROBOT_WHEEL_DIAMETER_MM               65
 #define ROBOT_ENCODER_COUNTS_PER_REV          1320

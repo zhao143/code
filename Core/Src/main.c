@@ -27,6 +27,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "robot_app.h"
+#include "robot_config.h"
 
 /* USER CODE END Includes */
 
@@ -97,7 +98,9 @@ int main(void)
   MX_TIM2_Init();
   MX_TIM4_Init();
   MX_USART1_UART_Init();
+#if ROBOT_BLUETOOTH_ENABLE
   MX_USART2_UART_Init();
+#endif
   /* USER CODE BEGIN 2 */
   RobotApp_BoardInit();
 
