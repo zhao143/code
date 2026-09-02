@@ -1,5 +1,6 @@
 #include "robot_app.h"
 #include "main.h"
+#include "robot_bluetooth.h"
 #include "robot_comm.h"
 #include "robot_config.h"
 #include "robot_delay.h"
@@ -7,6 +8,9 @@
 #include "robot_motor.h"
 #include "robot_sensors.h"
 #include "cmsis_os.h"
+#if ROBOT_IWDG_ENABLE
+#include "iwdg.h"
+#endif
 #include <stdio.h>
 #include <string.h>
 
@@ -22,6 +26,7 @@ typedef struct
   RobotAppState_t state;
   uint16_t faults;
   uint8_t motion_mode;
+  RobotControlSource_t control_owner;
   int16_t target_a;
   int16_t target_b;
   int16_t pwm_a;
@@ -29,6 +34,7 @@ typedef struct
   int32_t integ_a;
   int32_t integ_b;
   uint32_t last_cmd_ms;
+  uint32_t last_motion_cmd_ms;
   uint32_t stall_a_start_ms;
   uint32_t stall_b_start_ms;
   uint8_t command_seen;
@@ -386,7 +392,25 @@ static void ctx_lock(void)
 {
   if (s_ctx_mutex != 0 && osKernelGetState() == osKernelRunning)
   {
-    (void)osMutexAcquire(s_ctx_mutex, 20U);
+    /*
+     * 必须真正拿到互斥量后才能在 ctx_unlock 中释放它。
+     *
+     * 旧代码使用 20 ms 超时却忽略返回值：如果其它任务暂时占用互斥量，
+     * 当前任务没有拿到锁，随后仍然调用 osMutexRelease，会造成“非持有者
+     * 释放互斥量”。在开启 FreeRTOS 断言时，这会直接停在断言死循环，
+     * 于是出现 LED 停止、串口遥测停止和底盘看起来卡死。
+     *
+     * 这里的临界区只复制状态或更新少量控制变量，不包含传感器 I2C 和
+     * UART 阻塞发送，因此等待真正的锁不会影响正常运行。
+     */
+    while (osMutexAcquire(s_ctx_mutex, osWaitForever) != osOK)
+    {
+      /*
+       * 正常情况下不会进入这里。保留让出 CPU 的重试，避免异常返回时
+       * 忙等占满控制任务的时间片。
+       */
+      osThreadYield();
+    }
   }
 }
 
@@ -404,11 +428,220 @@ static void ctx_unlock(void)
 }
 
 /*
+ * 把控制来源枚举转换成短文本。
+ *
+ * 这个函数同时服务蓝牙反馈和状态显示。KICKPI 名称覆盖 ROS2、Web 以及
+ * K230 经 KICKPI 转发的运动命令。
+ */
+const char *RobotApp_ControlSourceName(RobotControlSource_t source)
+{
+  if (source == ROBOT_CONTROL_SOURCE_KICKPI)
+  {
+    return "KICKPI";
+  }
+  if (source == ROBOT_CONTROL_SOURCE_BLUETOOTH)
+  {
+    return "BLUETOOTH";
+  }
+  if (source == ROBOT_CONTROL_SOURCE_UART1_DEBUG)
+  {
+    return "UART1_DEBUG";
+  }
+  return "NONE";
+}
+
+/*
+ * 向底盘申请一组电机目标。
+ *
+ * 非零目标会申请或刷新控制租约；如果另一个来源已经拥有租约，则拒绝本次
+ * 命令，不修改当前目标。零目标是该来源的正常停车命令：只有当前来源或无
+ * 来源时才执行，这样 KICKPI 的周期性零刷新不会打断蓝牙正在控制的小车。
+ */
+uint8_t RobotApp_RequestMotion(RobotControlSource_t source,
+                               int32_t motor_a,
+                               int32_t motor_b,
+                               uint8_t mode)
+{
+  uint32_t now = HAL_GetTick();
+  uint8_t is_zero = (uint8_t)((motor_a == 0) && (motor_b == 0));
+  uint8_t accepted = 0U;
+
+  if (source == ROBOT_CONTROL_SOURCE_NONE)
+  {
+    return 0U;
+  }
+
+  ctx_lock();
+
+#if ROBOT_UART1_DEBUG_ONLY && ROBOT_MOTOR_AUTO_TEST_ENABLE
+  auto_test_cancel();
+#endif
+
+  if (is_zero != 0U)
+  {
+    if (s_ctx.control_owner == ROBOT_CONTROL_SOURCE_NONE ||
+        s_ctx.control_owner == source)
+    {
+      s_ctx.target_a = 0;
+      s_ctx.target_b = 0;
+      s_ctx.command_seen = 0U;
+      s_ctx.last_motion_cmd_ms = 0U;
+      s_ctx.control_owner = ROBOT_CONTROL_SOURCE_NONE;
+      if (s_ctx.faults == 0U)
+      {
+        s_ctx.state = ROBOT_APP_STATE_READY;
+      }
+      accepted = 1U;
+    }
+  }
+  else if (s_ctx.faults == 0U &&
+           (s_ctx.control_owner == ROBOT_CONTROL_SOURCE_NONE ||
+            s_ctx.control_owner == source))
+  {
+    if (mode != ROBOT_MOTION_MODE_SPEED)
+    {
+      mode = ROBOT_MOTION_MODE_PWM;
+    }
+
+    if (mode == ROBOT_MOTION_MODE_PWM)
+    {
+      s_ctx.target_a = clamp_pwm_i32(motor_a);
+      s_ctx.target_b = clamp_pwm_i32(motor_b);
+    }
+    else
+    {
+      s_ctx.target_a = (int16_t)clamp_i32(motor_a, -1500, 1500);
+      s_ctx.target_b = (int16_t)clamp_i32(motor_b, -1500, 1500);
+    }
+
+    s_ctx.motion_mode = mode;
+    s_ctx.last_cmd_ms = now;
+    s_ctx.last_motion_cmd_ms = now;
+    s_ctx.command_seen = 1U;
+    s_ctx.control_owner = source;
+    s_ctx.state = ROBOT_APP_STATE_RUN;
+    accepted = 1U;
+  }
+
+  ctx_unlock();
+  return accepted;
+}
+
+/*
+ * 执行全局普通停车。
+ *
+ * stop 明确表示操作者要求立即停止，因此不受当前控制来源限制，并且会释放
+ * 租约，让另一个控制端可以重新申请运动控制权。
+ */
+void RobotApp_RequestStop(RobotControlSource_t source)
+{
+  (void)source;
+
+  ctx_lock();
+
+#if ROBOT_UART1_DEBUG_ONLY && ROBOT_MOTOR_AUTO_TEST_ENABLE
+  auto_test_cancel();
+#endif
+
+  s_ctx.target_a = 0;
+  s_ctx.target_b = 0;
+  s_ctx.command_seen = 0U;
+  s_ctx.last_motion_cmd_ms = 0U;
+  s_ctx.control_owner = ROBOT_CONTROL_SOURCE_NONE;
+  s_ctx.state = ROBOT_APP_STATE_SAFE_IDLE;
+
+  ctx_unlock();
+}
+
+/*
+ * 处理底盘状态命令。
+ *
+ * 状态命令不抢占控制租约；idle 和 clear_fault 会停车并释放租约，enable
+ * 只把无故障底盘置为 READY。
+ */
+uint8_t RobotApp_RequestState(uint8_t command)
+{
+  uint8_t accepted = 1U;
+
+  ctx_lock();
+
+#if ROBOT_UART1_DEBUG_ONLY && ROBOT_MOTOR_AUTO_TEST_ENABLE
+  if (command == ROBOT_STATE_CMD_IDLE || command == ROBOT_STATE_CMD_CLEAR_FAULT)
+  {
+    auto_test_cancel();
+  }
+#endif
+
+  if (command == ROBOT_STATE_CMD_IDLE)
+  {
+    s_ctx.target_a = 0;
+    s_ctx.target_b = 0;
+    s_ctx.command_seen = 0U;
+    s_ctx.last_motion_cmd_ms = 0U;
+    s_ctx.control_owner = ROBOT_CONTROL_SOURCE_NONE;
+    s_ctx.state = ROBOT_APP_STATE_SAFE_IDLE;
+  }
+  else if (command == ROBOT_STATE_CMD_ENABLE)
+  {
+    if (s_ctx.faults == 0U)
+    {
+      s_ctx.state = ROBOT_APP_STATE_READY;
+    }
+    else
+    {
+      accepted = 0U;
+    }
+  }
+  else if (command == ROBOT_STATE_CMD_CLEAR_FAULT)
+  {
+    s_ctx.faults = 0U;
+    s_ctx.target_a = 0;
+    s_ctx.target_b = 0;
+    s_ctx.command_seen = 0U;
+    s_ctx.last_motion_cmd_ms = 0U;
+    s_ctx.control_owner = ROBOT_CONTROL_SOURCE_NONE;
+    s_ctx.state = ROBOT_APP_STATE_SAFE_IDLE;
+  }
+  else
+  {
+    accepted = 0U;
+  }
+
+  ctx_unlock();
+  return accepted;
+}
+
+/*
+ * 立即急停。
+ *
+ * 急停会保留故障锁存，必须先 clear_fault，再重新 enable 和发送运动命令。
+ */
+void RobotApp_RequestEstop(void)
+{
+  ctx_lock();
+
+#if ROBOT_UART1_DEBUG_ONLY && ROBOT_MOTOR_AUTO_TEST_ENABLE
+  auto_test_cancel();
+#endif
+
+  s_ctx.target_a = 0;
+  s_ctx.target_b = 0;
+  s_ctx.command_seen = 0U;
+  s_ctx.last_motion_cmd_ms = 0U;
+  s_ctx.control_owner = ROBOT_CONTROL_SOURCE_NONE;
+  s_ctx.faults |= ROBOT_FAULT_ESTOP;
+  s_ctx.state = ROBOT_APP_STATE_FAULT;
+
+  ctx_unlock();
+}
+
+/*
  * 根据传感器、故障和手动命令更新附加输出。
  *
- * 当前版本按用户要求关闭蜂鸣器和继电器：蜂鸣器 PB0、继电器 PB1 始终为低电平，
- * 不会因为故障、温度或串口命令而动作。保留下面的条件编译结构，是为了以后
- * 重新装上对应硬件时，只修改 robot_config.h 的开关即可恢复相关逻辑。
+ * 继电器和蜂鸣器都由 robot_config.h 控制。网页发送的 SET_OUTPUT 帧使用两个
+ * 字节：payload[0] 为蜂鸣器，payload[1] 为继电器。两者上电均为关闭状态。
+ * 继电器保留过温自动打开逻辑；蜂鸣器的故障自动报警另有独立宏控制，当前默认
+ * 关闭，所以不会因为故障状态而持续鸣叫。
  */
 static void apply_outputs(uint32_t now)
 {
@@ -459,17 +692,19 @@ static void apply_outputs(uint32_t now)
 
 #if ROBOT_BUZZER_ENABLE
   /*
-   * 蜂鸣器由编译期宏统一控制。当前调试阶段宏为 0，因此下面的报警逻辑不会
-   * 被编译进最终控制路径；以后把宏改为 1 才允许故障或手动命令控制蜂鸣器。
+   * 蜂鸣器由编译期宏统一控制。当前允许网页/协议手动控制，但故障自动报警
+   * 由 ROBOT_BUZZER_FAULT_ALARM_ENABLE 单独决定，默认保持静音。
    */
   if (s_ctx.manual_buzzer != 0U)
   {
     buzzer_on = 1U;
   }
+#if ROBOT_BUZZER_FAULT_ALARM_ENABLE
   else if (s_ctx.faults != 0U)
   {
     buzzer_on = (((now / 200U) & 0x01U) != 0U) ? 1U : 0U;
   }
+#endif
 #else
   (void)now;
   buzzer_on = 0U;
@@ -494,8 +729,21 @@ static void update_faults(uint32_t now)
    * FAULT 并停止电机。UART1 文本调试模式默认关闭这项检查，因为串口助手
    * 的 pwm/speed 命令是手动单次发送的，不能要求用户持续重复发送。
    */
-#if !ROBOT_UART1_DEBUG_ONLY || ROBOT_DEBUG_MOTION_TIMEOUT_ENABLE
+#if ROBOT_DEBUG_MOTION_TIMEOUT_ENABLE
   if (s_ctx.state == ROBOT_APP_STATE_RUN && s_ctx.command_seen != 0U &&
+      (uint32_t)(now - s_ctx.last_cmd_ms) > ROBOT_CMD_TIMEOUT_MS)
+  {
+    s_ctx.faults |= ROBOT_FAULT_COMM_TIMEOUT;
+  }
+#elif !ROBOT_UART1_DEBUG_ONLY
+  /*
+   * 正式 KICKPI 模式只对 KICKPI 的运动租约执行故障型通信超时。蓝牙链路
+   * 使用下面独立的租约超时自动停车，不能因为蓝牙断开把底盘锁成 KICKPI
+   * 通信故障，否则手机退出后 KICKPI 还需要人工清故障才能接管。
+   */
+  if (s_ctx.state == ROBOT_APP_STATE_RUN &&
+      s_ctx.command_seen != 0U &&
+      s_ctx.control_owner == ROBOT_CONTROL_SOURCE_KICKPI &&
       (uint32_t)(now - s_ctx.last_cmd_ms) > ROBOT_CMD_TIMEOUT_MS)
   {
     s_ctx.faults |= ROBOT_FAULT_COMM_TIMEOUT;
@@ -615,6 +863,26 @@ static void control_step(void)
 #if ROBOT_UART1_DEBUG_ONLY && ROBOT_MOTOR_AUTO_TEST_ENABLE
   auto_test_step(now);
 #endif
+
+  /*
+   * 蓝牙运动命令使用独立租约。蓝牙模块掉线或手机 App 停止刷新时，自动
+   * 清零目标并释放来源，保证电机不会因为最后一条命令停留在运行状态。
+   */
+  if (s_ctx.control_owner == ROBOT_CONTROL_SOURCE_BLUETOOTH &&
+      s_ctx.last_motion_cmd_ms != 0U &&
+      (uint32_t)(now - s_ctx.last_motion_cmd_ms) >
+      ROBOT_BLUETOOTH_OWNER_TIMEOUT_MS)
+  {
+    s_ctx.target_a = 0;
+    s_ctx.target_b = 0;
+    s_ctx.command_seen = 0U;
+    s_ctx.last_motion_cmd_ms = 0U;
+    s_ctx.control_owner = ROBOT_CONTROL_SOURCE_NONE;
+    if (s_ctx.faults == 0U)
+    {
+      s_ctx.state = ROBOT_APP_STATE_READY;
+    }
+  }
 
   update_faults(now);
 
@@ -737,11 +1005,12 @@ static void send_status(void)
   RobotApp_GetStatus(&status);
 
   RobotComm_DebugPrintf(
-      "T=%lu STATE=%s FAULT=0x%04X MODE=%s TARGET[A=%d B=%d] PWM[A=%d B=%d] RELAY=%u BUZZ=%u\r\n",
+      "T=%lu STATE=%s FAULT=0x%04X MODE=%s OWNER=%s TARGET[A=%d B=%d] PWM[A=%d B=%d] RELAY=%u BUZZ=%u\r\n",
       HAL_GetTick(),
       state_name(status.state),
       status.faults,
       mode_name(status.motion_mode),
+      RobotApp_ControlSourceName(status.control_owner),
       status.target_a,
       status.target_b,
       status.pwm_a,
@@ -819,6 +1088,7 @@ static void send_status(void)
   put_i32(payload, &pos, (int32_t)RobotComm_GetRxOverflowCount());
   put_u8(payload, &pos, status.fan_on);
   put_u8(payload, &pos, status.buzzer_on);
+  put_u8(payload, &pos, (uint8_t)status.control_owner);
 
   (void)RobotComm_SendFrame(ROBOT_CMD_STATUS, payload, pos);
 }
@@ -838,28 +1108,14 @@ static void handle_set_motion(const RobotCommFrame_t *frame)
     return;
   }
 
-  s_ctx.target_a = read_i16_le(&frame->payload[0]);
-  s_ctx.target_b = read_i16_le(&frame->payload[2]);
-  s_ctx.motion_mode = frame->payload[4];
-  if (s_ctx.motion_mode != ROBOT_MOTION_MODE_SPEED)
-  {
-    s_ctx.motion_mode = ROBOT_MOTION_MODE_PWM;
-  }
-
-  s_ctx.last_cmd_ms = HAL_GetTick();
-  s_ctx.command_seen = 1U;
-
-  if (s_ctx.faults == 0U)
-  {
-    if (s_ctx.target_a == 0 && s_ctx.target_b == 0)
-    {
-      s_ctx.state = ROBOT_APP_STATE_READY;
-    }
-    else
-    {
-      s_ctx.state = ROBOT_APP_STATE_RUN;
-    }
-  }
+  /*
+   * UART1 的正式帧统一走控制租约接口。这样 KICKPI、蓝牙和以后增加的
+   * 控制端不会各自维护一套“谁能改目标”的判断。
+   */
+  (void)RobotApp_RequestMotion(ROBOT_CONTROL_SOURCE_KICKPI,
+                               read_i16_le(&frame->payload[0]),
+                               read_i16_le(&frame->payload[2]),
+                               frame->payload[4]);
 }
 
 /*
@@ -870,61 +1126,43 @@ static void handle_set_motion(const RobotCommFrame_t *frame)
  */
 static void handle_set_state(const RobotCommFrame_t *frame)
 {
-  uint8_t cmd;
-
   if (frame->length < 1U)
   {
     return;
   }
 
-  cmd = frame->payload[0];
-
-  if (cmd == ROBOT_STATE_CMD_IDLE)
-  {
-    s_ctx.target_a = 0;
-    s_ctx.target_b = 0;
-    s_ctx.command_seen = 0U;
-    s_ctx.state = ROBOT_APP_STATE_SAFE_IDLE;
-  }
-  else if (cmd == ROBOT_STATE_CMD_ENABLE)
-  {
-    if (s_ctx.faults == 0U)
-    {
-      s_ctx.state = ROBOT_APP_STATE_READY;
-      s_ctx.last_cmd_ms = HAL_GetTick();
-    }
-  }
-  else if (cmd == ROBOT_STATE_CMD_CLEAR_FAULT)
-  {
-    s_ctx.faults = 0U;
-    s_ctx.target_a = 0;
-    s_ctx.target_b = 0;
-    s_ctx.command_seen = 0U;
-    s_ctx.state = ROBOT_APP_STATE_SAFE_IDLE;
-  }
+  (void)RobotApp_RequestState(frame->payload[0]);
 }
 
 /*
  * 处理正式模式下的附加输出命令。
  *
- * 当前蜂鸣器和继电器都被配置为关闭，所以即使 KICKPI 发送 SET_OUTPUT，
- * 也只会被安全忽略，不会改变 PB0/PB1 的输出状态。
+ * payload[0] 控制蜂鸣器，payload[1] 控制继电器。每次只接收两个字节，
+ * 且统一归一化为 0/1，避免上层传入任意数值造成不确定输出。
  */
 static void handle_set_output(const RobotCommFrame_t *frame)
 {
-#if ROBOT_BUZZER_ENABLE || ROBOT_RELAY_ENABLE
+  ctx_lock();
+
   if (frame->length < 2U)
   {
+    ctx_unlock();
     return;
   }
 
+#if ROBOT_BUZZER_ENABLE
   s_ctx.manual_buzzer = frame->payload[0] ? 1U : 0U;
+#else
+  s_ctx.manual_buzzer = 0U;
+#endif
+
+#if ROBOT_RELAY_ENABLE
   s_ctx.manual_fan = frame->payload[1] ? 1U : 0U;
 #else
-  (void)frame;
-  s_ctx.manual_buzzer = 0U;
   s_ctx.manual_fan = 0U;
 #endif
+
+  ctx_unlock();
 }
 
 /*
@@ -935,8 +1173,6 @@ static void handle_set_output(const RobotCommFrame_t *frame)
  */
 static void RobotApp_OnFrame(const RobotCommFrame_t *frame)
 {
-  ctx_lock();
-
   if (frame->command == ROBOT_CMD_SET_MOTION)
   {
     handle_set_motion(frame);
@@ -947,7 +1183,7 @@ static void RobotApp_OnFrame(const RobotCommFrame_t *frame)
   }
   else if (frame->command == ROBOT_CMD_GET_STATUS)
   {
-    s_ctx.telemetry_request = 1U;
+    RobotApp_RequestTelemetry();
   }
   else if (frame->command == ROBOT_CMD_SET_OUTPUT)
   {
@@ -955,11 +1191,8 @@ static void RobotApp_OnFrame(const RobotCommFrame_t *frame)
   }
   else if (frame->command == ROBOT_CMD_ESTOP)
   {
-    s_ctx.faults |= ROBOT_FAULT_ESTOP;
-    s_ctx.state = ROBOT_APP_STATE_FAULT;
+    RobotApp_RequestEstop();
   }
-
-  ctx_unlock();
 }
 #endif
 
@@ -976,7 +1209,16 @@ static void debug_print_help(void)
   RobotComm_DebugPrintf("Commands: help | status | enable | stop | clear | estop\r\n");
   RobotComm_DebugPrintf("          pwm <A -1000..1000> <B -1000..1000>\r\n");
   RobotComm_DebugPrintf("          speed <A mm/s> <B mm/s>\r\n");
+#if ROBOT_BUZZER_ENABLE
+  RobotComm_DebugPrintf("Buzzer manual control is enabled; fault alarm is %s.\r\n",
+#if ROBOT_BUZZER_FAULT_ALARM_ENABLE
+                        "enabled");
+#else
+                        "disabled");
+#endif
+#else
   RobotComm_DebugPrintf("Buzzer is disabled by ROBOT_BUZZER_ENABLE=0.\r\n");
+#endif
 #if ROBOT_RELAY_ENABLE
 #if ROBOT_RELAY_TEST_ENABLE
   RobotComm_DebugPrintf("Relay test is enabled: toggle every %lu ms.\r\n",
@@ -1000,37 +1242,21 @@ static void debug_print_help(void)
  */
 static void debug_set_motion(int32_t motor_a, int32_t motor_b, uint8_t mode)
 {
-  ctx_lock();
+  uint8_t accepted = RobotApp_RequestMotion(ROBOT_CONTROL_SOURCE_UART1_DEBUG,
+                                            motor_a,
+                                            motor_b,
+                                            mode);
 
-#if ROBOT_MOTOR_AUTO_TEST_ENABLE
-  auto_test_cancel();
-#endif
-
-  if (mode == ROBOT_MOTION_MODE_PWM)
+  if (accepted != 0U)
   {
-    s_ctx.target_a = clamp_pwm_i32(motor_a);
-    s_ctx.target_b = clamp_pwm_i32(motor_b);
+    RobotComm_DebugPrintf("OK motion source=UART1_DEBUG mode=%s A=%ld B=%ld\r\n",
+                          mode_name(mode), (long)motor_a, (long)motor_b);
   }
   else
   {
-    s_ctx.target_a = (int16_t)clamp_i32(motor_a, -1500, 1500);
-    s_ctx.target_b = (int16_t)clamp_i32(motor_b, -1500, 1500);
+    RobotComm_DebugPrintf("BUSY motion owner=%s\r\n",
+                          RobotApp_ControlSourceName(s_ctx.control_owner));
   }
-
-  s_ctx.motion_mode = mode;
-  s_ctx.last_cmd_ms = HAL_GetTick();
-  s_ctx.command_seen = 1U;
-
-  if (s_ctx.faults == 0U)
-  {
-    s_ctx.state = (s_ctx.target_a == 0 && s_ctx.target_b == 0) ?
-                  ROBOT_APP_STATE_READY : ROBOT_APP_STATE_RUN;
-  }
-
-  ctx_unlock();
-
-  RobotComm_DebugPrintf("OK motion mode=%s A=%d B=%d\r\n",
-                        mode_name(mode), (int)s_ctx.target_a, (int)s_ctx.target_b);
 }
 
 /*
@@ -1041,16 +1267,7 @@ static void debug_set_motion(int32_t motor_a, int32_t motor_b, uint8_t mode)
  */
 static void debug_stop(void)
 {
-  ctx_lock();
-#if ROBOT_MOTOR_AUTO_TEST_ENABLE
-  auto_test_cancel();
-#endif
-  s_ctx.target_a = 0;
-  s_ctx.target_b = 0;
-  s_ctx.command_seen = 0U;
-  s_ctx.state = ROBOT_APP_STATE_SAFE_IDLE;
-  ctx_unlock();
-
+  RobotApp_RequestStop(ROBOT_CONTROL_SOURCE_UART1_DEBUG);
   RobotComm_DebugPrintf("OK stop\r\n");
 }
 
@@ -1062,17 +1279,7 @@ static void debug_stop(void)
  */
 static void debug_clear_fault(void)
 {
-  ctx_lock();
-#if ROBOT_MOTOR_AUTO_TEST_ENABLE
-  auto_test_cancel();
-#endif
-  s_ctx.faults = 0U;
-  s_ctx.target_a = 0;
-  s_ctx.target_b = 0;
-  s_ctx.command_seen = 0U;
-  s_ctx.state = ROBOT_APP_STATE_SAFE_IDLE;
-  ctx_unlock();
-
+  (void)RobotApp_RequestState(ROBOT_STATE_CMD_CLEAR_FAULT);
   RobotComm_DebugPrintf("OK clear faults\r\n");
 }
 
@@ -1116,13 +1323,14 @@ static void RobotApp_OnDebugLine(const char *line)
   }
   else if (strcmp(line, "enable") == 0)
   {
-    ctx_lock();
-    if (s_ctx.faults == 0U)
+    if (RobotApp_RequestState(ROBOT_STATE_CMD_ENABLE) != 0U)
     {
-      s_ctx.state = ROBOT_APP_STATE_READY;
+      RobotComm_DebugPrintf("OK enable\r\n");
     }
-    ctx_unlock();
-    RobotComm_DebugPrintf("OK enable\r\n");
+    else
+    {
+      RobotComm_DebugPrintf("ERR enable fault=0x%04X\r\n", s_ctx.faults);
+    }
   }
   else if (strcmp(line, "stop") == 0)
   {
@@ -1134,13 +1342,7 @@ static void RobotApp_OnDebugLine(const char *line)
   }
   else if (strcmp(line, "estop") == 0)
   {
-    ctx_lock();
-#if ROBOT_MOTOR_AUTO_TEST_ENABLE
-    auto_test_cancel();
-#endif
-    s_ctx.faults |= ROBOT_FAULT_ESTOP;
-    s_ctx.state = ROBOT_APP_STATE_FAULT;
-    ctx_unlock();
+    RobotApp_RequestEstop();
     RobotComm_DebugPrintf("OK estop\r\n");
   }
   else if (sscanf(line, "pwm %d %d", &motor_a, &motor_b) == 2)
@@ -1175,6 +1377,210 @@ static void RobotApp_OnDebugLine(const char *line)
   }
 }
 #endif
+
+/*
+ * 蓝牙端帮助文本。
+ *
+ * 蓝牙模块采用最简单的“每条命令一行”协议，手机 App 和普通蓝牙助手都能
+ * 使用。方向命令默认使用 PWM=300，也可以显式填写 0 到 1000 的幅值。
+ */
+static void bluetooth_print_help(void)
+{
+  RobotBluetooth_SendText(
+      "Commands: help status enable stop clear estop\r\n"
+      "          pwm <A -1000..1000> <B -1000..1000>\r\n"
+      "          speed <A mm/s> <B mm/s>\r\n"
+      "          forward [PWM] back [PWM] left [PWM] right [PWM]\r\n");
+}
+
+/*
+ * 通过蓝牙返回一行简要状态。
+ *
+ * 详细传感器数据仍然由 KICKPI 的二进制状态帧上送 ROS2；手机端这里主要需要
+ * 知道连接是否有效、当前控制权属于谁、目标值和故障码。
+ */
+static void bluetooth_send_status(void)
+{
+  RobotAppStatus_t status;
+
+  RobotApp_GetStatus(&status);
+  RobotBluetooth_Sendf(
+      "STATUS state=%u fault=0x%04X owner=%s target=%d,%d pwm=%d,%d bat=%umV\r\n",
+      (unsigned int)status.state,
+      status.faults,
+      RobotApp_ControlSourceName(status.control_owner),
+      status.target_a,
+      status.target_b,
+      status.pwm_a,
+      status.pwm_b,
+      (unsigned int)status.sensors.battery_mv);
+}
+
+/*
+ * 返回蓝牙运动命令的处理结果。
+ *
+ * 命令被其他控制端占用时反馈 BUSY；传感器欠压、急停等故障存在时反馈
+ * FAULT。这样手机 App 不需要猜测按钮为什么没有让电机运动。
+ */
+static void bluetooth_report_motion_result(uint8_t accepted,
+                                           int32_t motor_a,
+                                           int32_t motor_b,
+                                           uint8_t mode)
+{
+  RobotAppStatus_t status;
+
+  RobotApp_GetStatus(&status);
+  if (accepted != 0U)
+  {
+    RobotBluetooth_Sendf("OK motion mode=%u target=%ld,%ld owner=%s\r\n",
+                         (unsigned int)mode,
+                         (long)motor_a,
+                         (long)motor_b,
+                         RobotApp_ControlSourceName(status.control_owner));
+  }
+  else if (status.faults != 0U)
+  {
+    RobotBluetooth_Sendf("FAULT code=0x%04X\r\n", status.faults);
+  }
+  else
+  {
+    RobotBluetooth_Sendf("BUSY owner=%s\r\n",
+                         RobotApp_ControlSourceName(status.control_owner));
+  }
+}
+
+/*
+ * 处理 USART2 蓝牙模块收到的一整行命令。
+ *
+ * 这条路径既供手机 App 使用，也供普通蓝牙串口助手手工测试。所有运动命令
+ * 最终都调用 RobotApp_RequestMotion，因此和 KICKPI 共享同一套控制权规则。
+ */
+void RobotApp_OnBluetoothLine(const char *line)
+{
+  int motor_a;
+  int motor_b;
+  int value;
+  uint8_t accepted;
+
+  if (line == 0)
+  {
+    return;
+  }
+
+  if (strcmp(line, "help") == 0)
+  {
+    bluetooth_print_help();
+  }
+  else if (strcmp(line, "status") == 0)
+  {
+    bluetooth_send_status();
+  }
+  else if (strcmp(line, "enable") == 0)
+  {
+    if (RobotApp_RequestState(ROBOT_STATE_CMD_ENABLE) != 0U)
+    {
+      RobotBluetooth_SendText("OK enable\r\n");
+    }
+    else
+    {
+      bluetooth_send_status();
+    }
+  }
+  else if (strcmp(line, "stop") == 0)
+  {
+    RobotApp_RequestStop(ROBOT_CONTROL_SOURCE_BLUETOOTH);
+    RobotBluetooth_SendText("OK stop\r\n");
+  }
+  else if (strcmp(line, "clear") == 0 || strcmp(line, "clear_fault") == 0)
+  {
+    (void)RobotApp_RequestState(ROBOT_STATE_CMD_CLEAR_FAULT);
+    RobotBluetooth_SendText("OK clear\r\n");
+  }
+  else if (strcmp(line, "estop") == 0)
+  {
+    RobotApp_RequestEstop();
+    RobotBluetooth_SendText("OK estop\r\n");
+  }
+  else if (sscanf(line, "pwm %d %d", &motor_a, &motor_b) == 2)
+  {
+    accepted = RobotApp_RequestMotion(ROBOT_CONTROL_SOURCE_BLUETOOTH,
+                                      motor_a,
+                                      motor_b,
+                                      ROBOT_MOTION_MODE_PWM);
+    bluetooth_report_motion_result(accepted,
+                                   motor_a,
+                                   motor_b,
+                                   ROBOT_MOTION_MODE_PWM);
+  }
+  else if (sscanf(line, "speed %d %d", &motor_a, &motor_b) == 2)
+  {
+    accepted = RobotApp_RequestMotion(ROBOT_CONTROL_SOURCE_BLUETOOTH,
+                                      motor_a,
+                                      motor_b,
+                                      ROBOT_MOTION_MODE_SPEED);
+    bluetooth_report_motion_result(accepted,
+                                   motor_a,
+                                   motor_b,
+                                   ROBOT_MOTION_MODE_SPEED);
+  }
+  else if (strcmp(line, "forward") == 0 ||
+           sscanf(line, "forward %d", &value) == 1)
+  {
+    if (strcmp(line, "forward") == 0)
+    {
+      value = 300;
+    }
+    accepted = RobotApp_RequestMotion(ROBOT_CONTROL_SOURCE_BLUETOOTH,
+                                      value,
+                                      value,
+                                      ROBOT_MOTION_MODE_PWM);
+    bluetooth_report_motion_result(accepted, value, value, ROBOT_MOTION_MODE_PWM);
+  }
+  else if (strcmp(line, "back") == 0 ||
+           sscanf(line, "back %d", &value) == 1)
+  {
+    if (strcmp(line, "back") == 0)
+    {
+      value = 300;
+    }
+    accepted = RobotApp_RequestMotion(ROBOT_CONTROL_SOURCE_BLUETOOTH,
+                                      -value,
+                                      -value,
+                                      ROBOT_MOTION_MODE_PWM);
+    bluetooth_report_motion_result(accepted, -value, -value, ROBOT_MOTION_MODE_PWM);
+  }
+  else if (strcmp(line, "left") == 0 ||
+           sscanf(line, "left %d", &value) == 1)
+  {
+    if (strcmp(line, "left") == 0)
+    {
+      value = 300;
+    }
+    accepted = RobotApp_RequestMotion(ROBOT_CONTROL_SOURCE_BLUETOOTH,
+                                      -value,
+                                      value,
+                                      ROBOT_MOTION_MODE_PWM);
+    bluetooth_report_motion_result(accepted, -value, value, ROBOT_MOTION_MODE_PWM);
+  }
+  else if (strcmp(line, "right") == 0 ||
+           sscanf(line, "right %d", &value) == 1)
+  {
+    if (strcmp(line, "right") == 0)
+    {
+      value = 300;
+    }
+    accepted = RobotApp_RequestMotion(ROBOT_CONTROL_SOURCE_BLUETOOTH,
+                                      value,
+                                      -value,
+                                      ROBOT_MOTION_MODE_PWM);
+    bluetooth_report_motion_result(accepted, value, -value, ROBOT_MOTION_MODE_PWM);
+  }
+  else
+  {
+    RobotBluetooth_Sendf("ERR unknown command: %s\r\n", line);
+    bluetooth_print_help();
+  }
+}
 
 /*
  * 初始化机器人底板应用层。
@@ -1234,15 +1640,24 @@ void RobotApp_BoardInit(void)
 void RobotApp_CreateTasks(void)
 {
   s_ctx_mutex = osMutexNew(&s_ctx_mutex_attr);
+  /*
+   * 这些对象全部来自 FreeRTOS 动态 heap。任何一个创建失败都意味着后续
+   * 控制、传感器或遥测功能不完整，不能继续以“看起来正常”的方式运行。
+   * configASSERT 会进入统一的电机安全停车和 LED 故障指示。
+   */
+  configASSERT(s_ctx_mutex != 0);
 #if ROBOT_UART1_DEBUG_ONLY
   RobotComm_SetDebugLineHandler(RobotApp_OnDebugLine);
 #else
   RobotComm_SetFrameHandler(RobotApp_OnFrame);
 #endif
+#if ROBOT_BLUETOOTH_ENABLE
+  RobotBluetooth_SetLineHandler(RobotApp_OnBluetoothLine);
+#endif
 
-  (void)osThreadNew(RobotApp_ControlTask, 0, &s_control_attr);
-  (void)osThreadNew(RobotApp_SensorTask, 0, &s_sensor_attr);
-  (void)osThreadNew(RobotApp_TelemetryTask, 0, &s_telemetry_attr);
+  configASSERT(osThreadNew(RobotApp_ControlTask, 0, &s_control_attr) != 0);
+  configASSERT(osThreadNew(RobotApp_SensorTask, 0, &s_sensor_attr) != 0);
+  configASSERT(osThreadNew(RobotApp_TelemetryTask, 0, &s_telemetry_attr) != 0);
 }
 
 /*
@@ -1316,6 +1731,7 @@ void RobotApp_GetStatus(RobotAppStatus_t *out)
   out->state = s_ctx.state;
   out->faults = s_ctx.faults;
   out->motion_mode = s_ctx.motion_mode;
+  out->control_owner = s_ctx.control_owner;
   out->target_a = s_ctx.target_a;
   out->target_b = s_ctx.target_b;
   out->pwm_a = s_ctx.pwm_a;
@@ -1365,10 +1781,24 @@ static void RobotApp_ControlTask(void *argument)
   for (;;)
   {
     RobotComm_ProcessRx();
+#if ROBOT_BLUETOOTH_ENABLE
+    RobotComm_ProcessBluetoothRx();
+#endif
 
     ctx_lock();
     control_step();
     ctx_unlock();
+
+#if ROBOT_IWDG_ENABLE
+    /*
+     * 只由 10ms 控制任务刷新硬件看门狗。
+     *
+     * 如果控制任务因为死循环、互斥量死锁、异常或调度器异常而不能继续
+     * 执行到这里，IWDG 就不会被刷新，芯片会在设定时间后自动复位。传感器
+     * 任务和遥测任务不能代替控制任务刷新，这样才能真正检测到底盘控制链路。
+     */
+    (void)HAL_IWDG_Refresh(&hiwdg);
+#endif
 
     wake_tick += ROBOT_CONTROL_PERIOD_MS;
     (void)osDelayUntil(wake_tick);

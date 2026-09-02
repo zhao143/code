@@ -73,6 +73,33 @@
     button.estop { color: #fff; background: var(--red); border-color: var(--red); }
     .state-row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
     .state-row button { min-width: 104px; }
+    .output-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(180px, 260px));
+      gap: 10px;
+    }
+    .output-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      min-height: 48px;
+      padding: 8px 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fbfcfe;
+    }
+    .output-toggle input { width: 20px; height: 20px; accent-color: var(--blue); }
+    .video-frame {
+      display: block;
+      width: 100%;
+      max-height: 560px;
+      object-fit: contain;
+      background: #101820;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+    }
+    .video-status { margin-top: 8px; color: var(--muted); font-size: 13px; }
     .tables {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -93,6 +120,7 @@
       header { padding: 14px 16px; }
       main { padding: 12px; }
       .controls { grid-template-columns: repeat(3, 1fr); }
+      .output-grid { grid-template-columns: 1fr; }
       .controls button:nth-child(1) { grid-column: 2; }
       .controls button:nth-child(2) { grid-column: 1; grid-row: 2; }
       .controls button:nth-child(3) { grid-column: 2; grid-row: 2; }
@@ -132,6 +160,20 @@
     </section>
 
     <section class="section">
+      <h2>附加输出</h2>
+      <div class="output-grid">
+        <label class="output-toggle">风扇继电器 <input id="relay-toggle" type="checkbox"></label>
+        <label class="output-toggle">蜂鸣器 <input id="buzzer-toggle" type="checkbox"></label>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>K230 实时视频</h2>
+      <img id="k230-video" class="video-frame" alt="K230 摄像头画面">
+      <div id="video-status" class="video-status">视频连接中...</div>
+    </section>
+
+    <section class="section">
       <h2>电池电压记录</h2>
       <canvas id="voltage-chart" width="1100" height="180"></canvas>
     </section>
@@ -159,6 +201,10 @@
     let activeButton = null;
     let heartbeat = null;
     let history = [];
+    const videoElement = document.getElementById("k230-video");
+    const videoStatus = document.getElementById("video-status");
+    const relayToggle = document.getElementById("relay-toggle");
+    const buzzerToggle = document.getElementById("buzzer-toggle");
 
     async function api(path, method = "GET", body = null) {
       const options = { method, headers: { "X-Device-Token": token } };
@@ -200,6 +246,34 @@
       sendMotion("stop");
     }
 
+    function startVideo() {
+      videoElement.src = `/video.mjpg?token=${encodeURIComponent(token)}`;
+      videoElement.onload = () => {
+        videoStatus.textContent = "K230 视频在线";
+        videoStatus.className = "video-status good";
+      };
+      videoElement.onerror = () => {
+        videoStatus.textContent = "K230 视频不可用，请确认视频代理已启动";
+        videoStatus.className = "video-status bad";
+      };
+    }
+
+    async function sendOutputs() {
+      const relay = relayToggle.checked;
+      const buzzer = buzzerToggle.checked;
+      try {
+        const result = await api("/api/v1/control/output", "POST", {
+          source: "web", relay_on: relay, buzzer_on: buzzer
+        });
+        if (!result.ok) throw new Error(result.result || "output rejected");
+      } catch (error) {
+        // 发送失败时恢复上一次已知状态，避免开关外观和底板实际状态不一致。
+        relayToggle.checked = !relay;
+        buzzerToggle.checked = !buzzer;
+        window.alert("输出控制失败：" + error.message);
+      }
+    }
+
     document.querySelectorAll("[data-motion]").forEach(button => {
       button.addEventListener("pointerdown", event => {
         event.preventDefault();
@@ -217,6 +291,8 @@
         source: "web", command: button.dataset.state
       }));
     });
+    relayToggle.addEventListener("change", sendOutputs);
+    buzzerToggle.addEventListener("change", sendOutputs);
 
     function drawVoltageChart() {
       const canvas = document.getElementById("voltage-chart");
@@ -252,6 +328,9 @@
       const faultElement = document.getElementById("faults");
       faultElement.textContent = `0x${faults.toString(16).padStart(4, "0").toUpperCase()}`;
       faultElement.className = faults ? "bad" : "good";
+      const outputs = item.outputs || {};
+      relayToggle.checked = Boolean(outputs.relay_on);
+      buzzerToggle.checked = Boolean(outputs.buzzer_on);
       const odom = item.odom || {};
       document.getElementById("odom-table").innerHTML = `
         <tr><th>X</th><td>${Number(odom.x_m || 0).toFixed(3)} m</td></tr>
@@ -278,6 +357,7 @@
       }
     }
     refresh();
+    startVideo();
     setInterval(refresh, 1000);
   </script>
 </body>

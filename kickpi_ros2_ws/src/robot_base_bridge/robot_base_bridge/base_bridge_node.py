@@ -1,3 +1,4 @@
+import json
 import math
 import queue
 import struct
@@ -141,7 +142,8 @@ class RobotBaseBridge(Node):
 
     这个节点订阅 /cmd_vel，把线速度和角速度换算成左右轮目标，再通过 UART1
     发给 STM32；同时解析 STM32 回传状态，发布电池、IMU、温湿度、里程计和
-    故障状态话题。
+    故障状态话题。网页的继电器、蜂鸣器开关通过 /base/output_cmd 进入同一条
+    二进制串口协议，避免 Web 线程直接操作串口。
     """
 
     def __init__(self):
@@ -194,6 +196,7 @@ class RobotBaseBridge(Node):
 
         self.cmd_sub = self.create_subscription(Twist, "cmd_vel", self.on_cmd_vel, 10)
         self.state_cmd_sub = self.create_subscription(String, "base/state_cmd", self.on_state_cmd, 10)
+        self.output_cmd_sub = self.create_subscription(String, "base/output_cmd", self.on_output_cmd, 10)
         self.odom_pub = self.create_publisher(Odometry, "odom", 10)
         self.battery_pub = self.create_publisher(BatteryState, "battery_state", 10)
         self.imu_pub = self.create_publisher(Imu, "imu/raw", 10)
@@ -201,6 +204,8 @@ class RobotBaseBridge(Node):
         self.env_humi_pub = self.create_publisher(RelativeHumidity, "env/humidity", 10)
         self.battery_temp_pub = self.create_publisher(Temperature, "battery/temperature", 10)
         self.fault_pub = self.create_publisher(UInt16, "base/faults", 10)
+        self.control_owner_pub = self.create_publisher(String, "base/control_owner", 10)
+        self.output_state_pub = self.create_publisher(String, "base/output_state", 10)
 
         self.control_timer = self.create_timer(0.05, self.send_control)
         self.status_timer = self.create_timer(0.02, self.process_status_queue)
@@ -331,6 +336,33 @@ class RobotBaseBridge(Node):
         else:
             self.get_logger().warning(f"unknown state command ignored: {msg.data!r}")
 
+    def on_output_cmd(self, msg: String):
+        """接收蜂鸣器和继电器开关，并发送 STM32 SET_OUTPUT 帧。
+
+        约定消息格式为 ``buzzer=0 relay=1``，其中两个值都会被归一化为
+        0 或 1。payload[0] 是蜂鸣器，payload[1] 是继电器/风扇。使用文本
+        ROS 话题只是为了让 Web 网关和 K230 调用简单，真正经过串口的仍然是
+        带 CRC16 的二进制帧。
+        """
+        values = {}
+        for token in msg.data.replace(",", " ").split():
+            if "=" not in token:
+                continue
+            key, value = token.split("=", 1)
+            try:
+                values[key.strip().lower()] = 1 if int(value.strip()) != 0 else 0
+            except ValueError:
+                continue
+
+        if "buzzer" not in values and "relay" not in values:
+            self.get_logger().warning(f"invalid output command ignored: {msg.data!r}")
+            return
+
+        buzzer = values.get("buzzer", 0)
+        relay = values.get("relay", 0)
+        self.write_frame(CMD_SET_OUTPUT, bytes([buzzer, relay]))
+        self.get_logger().info(f"output command sent: buzzer={buzzer} relay={relay}")
+
     def send_control(self):
         """周期性把最新 /cmd_vel 转换为左右轮命令并发送给 STM32。
 
@@ -447,6 +479,8 @@ class RobotBaseBridge(Node):
             "rx_overflow": i32(),
             "fan_on": u8(),
             "buzzer_on": u8(),
+            # 新版 STM32 状态帧追加的控制来源字段；兼容旧版 56 字节状态帧。
+            "control_owner": u8() if off < len(payload) else 0,
         }
         return status
 
@@ -461,6 +495,25 @@ class RobotBaseBridge(Node):
         fault_msg = UInt16()
         fault_msg.data = int(status["faults"])
         self.fault_pub.publish(fault_msg)
+
+        owner_msg = String()
+        owner_msg.data = {
+            0: "NONE",
+            1: "KICKPI",
+            2: "BLUETOOTH",
+            3: "UART1_DEBUG",
+        }.get(int(status.get("control_owner", 0)), "UNKNOWN")
+        self.control_owner_pub.publish(owner_msg)
+
+        output_msg = String()
+        output_msg.data = json.dumps(
+            {
+                "relay_on": bool(status.get("fan_on", 0)),
+                "buzzer_on": bool(status.get("buzzer_on", 0)),
+            },
+            separators=(",", ":"),
+        )
+        self.output_state_pub.publish(output_msg)
 
         if status["sensor_flags"] & SENSOR_INA219_VALID:
             msg = BatteryState()

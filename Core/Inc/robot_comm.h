@@ -8,6 +8,14 @@
 #define ROBOT_COMM_FRAME_HEAD1                0x55U
 #define ROBOT_COMM_VERSION                    0x01U
 #define ROBOT_COMM_MAX_PAYLOAD                64U
+/*
+ * 单次控制任务调用最多解析的 UART1 字节数。
+ *
+ * UART 接收采用中断 + 环形缓冲。即使上位机连续发送数据，也不能在一次
+ * 调用中无限处理，否则高优先级控制任务可能长期不返回，LED 和遥测任务
+ * 就会表现为停止运行。
+ */
+#define ROBOT_COMM_PROCESS_BUDGET             64U
 
 #define ROBOT_CMD_SET_MOTION                  0x01U
 #define ROBOT_CMD_SET_STATE                   0x02U
@@ -65,6 +73,14 @@ void RobotComm_SetDebugLineHandler(RobotCommDebugLineHandler_t handler);
  * 它解析 AA 55 开头的二进制帧并检查 CRC。
  */
 void RobotComm_ProcessRx(void);
+
+/*
+ * 处理 USART2 蓝牙模块的接收缓冲区。
+ *
+ * USART2 仍然使用 1 字节中断接收，但完整文本行在 FreeRTOS 控制任务中
+ * 解析，避免在中断中直接执行控制逻辑。
+ */
+void RobotComm_ProcessBluetoothRx(void);
 
 /*
  * 发送 KICKPI 二进制协议帧。

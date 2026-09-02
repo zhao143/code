@@ -25,10 +25,12 @@ code\robot_comm.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_cortex.h
 code\robot_comm.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_flash.h
 code\robot_comm.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_flash_ex.h
 code\robot_comm.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_i2c.h
+code\robot_comm.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_iwdg.h
 code\robot_comm.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_pwr.h
 code\robot_comm.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_tim.h
 code\robot_comm.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_tim_ex.h
 code\robot_comm.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_uart.h
+code\robot_comm.o: ../Core/Inc/robot_bluetooth.h
 code\robot_comm.o: ../Core/Inc/robot_config.h
 code\robot_comm.o: ../Core/Inc/usart.h
 code\robot_comm.o: ../Core/Inc/main.h

@@ -70,6 +70,7 @@
 #define configUSE_16_BIT_TICKS                   0
 #define configUSE_MUTEXES                        1
 #define configQUEUE_REGISTRY_SIZE                8
+#define configCHECK_FOR_STACK_OVERFLOW           2
 #define configUSE_RECURSIVE_MUTEXES              1
 #define configUSE_COUNTING_SEMAPHORES            1
 #define configUSE_PORT_OPTIMISED_TASK_SELECTION  0
@@ -134,7 +135,12 @@ See http://www.FreeRTOS.org/RTOS-Cortex-M3-M4.html. */
 /* Normal assert() semantics without relying on the provision of an assert.h
 header file. */
 /* USER CODE BEGIN 1 */
-#define configASSERT( x ) if ((x) == 0) {taskDISABLE_INTERRUPTS(); for( ;; );}
+/*
+ * 不再直接无提示地关闭中断死循环。发生断言时进入 freertos.c 的故障
+ * 处理函数，先关闭电机，再用 LED 慢速闪烁，便于现场判断是 RTOS 断言。
+ */
+extern void RobotFreeRTOS_AssertFailed(const char *file, int line);
+#define configASSERT( x ) do { if ((x) == 0) { RobotFreeRTOS_AssertFailed(__FILE__, __LINE__); } } while (0)
 /* USER CODE END 1 */
 
 /* Definitions that map the FreeRTOS port interrupt handlers to their CMSIS
@@ -147,7 +153,14 @@ standard names. */
 #define USE_CUSTOM_SYSTICK_HANDLER_IMPLEMENTATION 0
 
 /* USER CODE BEGIN Defines */
-/* Section where parameter definitions can be added (for instance, to override default ones in FreeRTOS.h) */
+/*
+ * 打开 FreeRTOS 的资源异常钩子。
+ *
+ * 堆栈溢出和动态内存申请失败如果不打开，默认很难判断系统为什么
+ * 突然停止；打开后会进入 freertos.c 中的安全故障处理函数。
+ */
+#define configCHECK_FOR_STACK_OVERFLOW           2
+#define configUSE_MALLOC_FAILED_HOOK             1
 /* USER CODE END Defines */
 
 #endif /* FREERTOS_CONFIG_H */

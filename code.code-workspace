@@ -28,6 +28,19 @@
             "editor.insertSpaces": true,
             "editor.tabSize": 4,
             "editor.autoIndent": "advanced"
+        },
+        "python.analysis.extraPaths": [
+            "C:\\Users\\Administrator\\.kendryte\\k230_canmv_stubs\\b7f68878d3094006492a62c9ea4680dc164ada34",
+            "c:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\canmv-vscode-Administrator\\047c8cf796f96a10\\remote",
+            "c:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\canmv-vscode-Administrator\\047c8cf796f96a10\\remote\\sdcard",
+            "c:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\canmv-vscode-Administrator\\047c8cf796f96a10\\remote\\data",
+            "c:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\canmv-vscode-Administrator\\047c8cf796f96a10\\remote\\udisk",
+            "c:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\canmv-vscode-Administrator\\047c8cf796f96a10\\remote\\data\\Cron",
+            "c:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\canmv-vscode-Administrator\\047c8cf796f96a10\\remote\\sdcard\\Cron"
+        ],
+        "python.analysis.stubPath": "C:\\Users\\Administrator\\.kendryte\\k230_canmv_pylance\\047c8cf796f96a10\\typings",
+        "python.analysis.diagnosticSeverityOverrides": {
+            "reportMissingModuleSource": "none"
         }
     },
     "extensions": {

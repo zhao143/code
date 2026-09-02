@@ -25,6 +25,7 @@ code\main.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_cortex.h
 code\main.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_flash.h
 code\main.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_flash_ex.h
 code\main.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_i2c.h
+code\main.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_iwdg.h
 code\main.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_pwr.h
 code\main.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_tim.h
 code\main.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_tim_ex.h
@@ -41,6 +42,7 @@ code\main.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/task.h
 code\main.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/list.h
 code\main.o: ../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/cmsis_os2.h
 code\main.o: ../Core/Inc/i2c.h
+code\main.o: ../Core/Inc/iwdg.h
 code\main.o: ../Core/Inc/tim.h
 code\main.o: ../Core/Inc/usart.h
 code\main.o: ../Core/Inc/gpio.h

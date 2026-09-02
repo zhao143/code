@@ -28,10 +28,12 @@ code\robot_app.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_cortex.h
 code\robot_app.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_flash.h
 code\robot_app.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_flash_ex.h
 code\robot_app.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_i2c.h
+code\robot_app.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_iwdg.h
 code\robot_app.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_pwr.h
 code\robot_app.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_tim.h
 code\robot_app.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_tim_ex.h
 code\robot_app.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_uart.h
+code\robot_app.o: ../Core/Inc/robot_bluetooth.h
 code\robot_app.o: ../Core/Inc/robot_comm.h
 code\robot_app.o: ../Core/Inc/robot_config.h
 code\robot_app.o: ../Core/Inc/robot_delay.h
@@ -47,5 +49,6 @@ code\robot_app.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/mpu_wrapper
 code\robot_app.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/task.h
 code\robot_app.o: ../Middlewares/Third_Party/FreeRTOS/Source/include/list.h
 code\robot_app.o: ../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/cmsis_os2.h
+code\robot_app.o: ../Core/Inc/iwdg.h
 code\robot_app.o: D:\Keil_v5\ARM\ARM_Compiler_5.06u7\Bin\..\include\stdio.h
 code\robot_app.o: D:\Keil_v5\ARM\ARM_Compiler_5.06u7\Bin\..\include\string.h

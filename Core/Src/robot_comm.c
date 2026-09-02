@@ -1,4 +1,5 @@
 #include "robot_comm.h"
+#include "robot_bluetooth.h"
 #include "robot_config.h"
 #include "usart.h"
 #include <stdarg.h>
@@ -16,14 +17,18 @@
  * 在中断中做耗时操作，也能让电机控制周期更加稳定。
  */
 static uint8_t s_rx_byte;
+#if ROBOT_BLUETOOTH_ENABLE
+static uint8_t s_bt_rx_byte;
+#endif
 static volatile uint16_t s_rx_head;
 static volatile uint16_t s_rx_tail;
 static volatile uint32_t s_rx_overflow;
 static uint8_t s_rx_ring[ROBOT_COMM_RX_RING_SIZE];
 #if !ROBOT_UART1_DEBUG_ONLY
 static RobotCommFrameHandler_t s_frame_handler;
-#endif
+#else
 static RobotCommDebugLineHandler_t s_debug_line_handler;
+#endif
 
 #if ROBOT_UART1_DEBUG_ONLY
 static char s_debug_line[ROBOT_DEBUG_LINE_SIZE];
@@ -295,6 +300,10 @@ void RobotComm_Init(void)
   parser_reset();
 #endif
   HAL_UART_Receive_IT(&huart1, &s_rx_byte, 1U);
+#if ROBOT_BLUETOOTH_ENABLE
+  RobotBluetooth_Init();
+  HAL_UART_Receive_IT(&huart2, &s_bt_rx_byte, 1U);
+#endif
 }
 
 /*
@@ -320,20 +329,26 @@ void RobotComm_SetFrameHandler(RobotCommFrameHandler_t handler)
  */
 void RobotComm_SetDebugLineHandler(RobotCommDebugLineHandler_t handler)
 {
+#if ROBOT_UART1_DEBUG_ONLY
   s_debug_line_handler = handler;
+#else
+  (void)handler;
+#endif
 }
 
 /*
- * 处理接收缓冲区中的所有待处理字节。
+ * 处理接收缓冲区中的一批待处理字节。
  *
  * 该函数应该由 FreeRTOS 控制任务周期性调用。它不在 UART 中断里直接解析，
  * 这样既能缩短中断时间，也能让命令处理和电机状态更新运行在同一个任务上下文。
+ * 每次调用有固定字节预算，避免上位机持续发送数据时饿死其他任务。
  */
 void RobotComm_ProcessRx(void)
 {
   uint8_t byte;
+  uint16_t budget = ROBOT_COMM_PROCESS_BUDGET;
 
-  while (rx_pop(&byte) != 0U)
+  while (budget-- != 0U && rx_pop(&byte) != 0U)
   {
 #if ROBOT_UART1_DEBUG_ONLY
     debug_accept(byte);
@@ -341,6 +356,19 @@ void RobotComm_ProcessRx(void)
     parser_accept(byte);
 #endif
   }
+}
+
+/*
+ * 处理 USART2 蓝牙接收缓冲区中的所有完整文本命令。
+ *
+ * 这个函数单独暴露给应用层，是为了让 UART1 的二进制解析和 UART2 的蓝牙
+ * 文本解析互不混淆。两者最终都会在同一个 FreeRTOS 控制任务中执行。
+ */
+void RobotComm_ProcessBluetoothRx(void)
+{
+#if ROBOT_BLUETOOTH_ENABLE
+  RobotBluetooth_ProcessRx();
+#endif
 }
 
 /*
@@ -367,6 +395,11 @@ HAL_StatusTypeDef RobotComm_SendFrame(uint8_t command, const uint8_t *payload, u
   uint16_t crc;
 
   if (length > ROBOT_COMM_MAX_PAYLOAD)
+  {
+    return HAL_ERROR;
+  }
+
+  if (length != 0U && payload == 0)
   {
     return HAL_ERROR;
   }
@@ -452,6 +485,13 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
     rx_push_from_isr(s_rx_byte);
     HAL_UART_Receive_IT(&huart1, &s_rx_byte, 1U);
   }
+#if ROBOT_BLUETOOTH_ENABLE
+  else if (huart->Instance == USART2)
+  {
+    RobotBluetooth_OnRxByteFromIsr(s_bt_rx_byte);
+    HAL_UART_Receive_IT(&huart2, &s_bt_rx_byte, 1U);
+  }
+#endif
 }
 
 /*
@@ -466,4 +506,10 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
   {
     HAL_UART_Receive_IT(&huart1, &s_rx_byte, 1U);
   }
+#if ROBOT_BLUETOOTH_ENABLE
+  else if (huart->Instance == USART2)
+  {
+    HAL_UART_Receive_IT(&huart2, &s_bt_rx_byte, 1U);
+  }
+#endif
 }

@@ -17,29 +17,49 @@
  *
  * 调板子时保持为 1；硬件确认稳定后，只改这个宏为 0，再重新编译烧录。
  */
-#define ROBOT_UART1_DEBUG_ONLY                1
+#define ROBOT_UART1_DEBUG_ONLY                0
 
 /*
- * 本版本的未使用外设开关。
+ * 本版本的附加外设开关。
  *
- * 你的当前目标是先把底板的电机、编码器、传感器和 USART1 调试功能跑通，
- * 暂时不使用蜂鸣器、继电器/风扇和蓝牙。因此这里采用“硬关闭”而不是只
- * 不接线：代码不会主动驱动这些输出，也不会初始化蓝牙串口。
+ * 正式运行版本使用 USART1 接收 KICKPI 的二进制协议，使用 USART2 接收蓝牙
+ * 模块的文本协议。网页可以通过 KICKPI 控制继电器和蜂鸣器。
  */
-#define ROBOT_RELAY_ENABLE                    0
-#define ROBOT_BLUETOOTH_ENABLE                0
+#define ROBOT_RELAY_ENABLE                    1
+#define ROBOT_BLUETOOTH_ENABLE                1
+
+/*
+ * 独立看门狗开关。
+ *
+ * 0：当前工程不调用 IWDG。
+ * 1：工程必须已经在 CubeMX 中生成 iwdg.c/iwdg.h；程序启动后由
+ *    10ms 控制任务定期刷新看门狗。只要控制任务、调度器或关键路径长时间
+ *    卡住，约 1 秒内就会自动复位，避免电机长期保持危险输出。
+ *
+ * 当前工程已经生成 IWDG 文件并打开该开关。开启看门狗后，必须重新编译和
+ * 烧录，不能只改 CubeMX 配置不更新固件。
+ */
+#define ROBOT_IWDG_ENABLE                     1
 
 /*
  * 蜂鸣器总开关。
  *
- * 0：蜂鸣器永远不响。即使发生低电压、过温、急停、串口超时等故障，程序
- *    也只会在状态行里显示故障码，不会拉高 PB0。
+ * 0：禁止蜂鸣器输出。
  *
- * 1：允许程序控制蜂鸣器。后续整车装好后，如果需要报警，再打开这个宏。
+ * 1：允许网页、KICKPI 或蓝牙命令手动控制蜂鸣器。上电默认关闭。
  *
- * 你现在反馈蜂鸣器太吵，所以默认关掉。
+ * 这里打开是为了让网页开关真正可用；故障自动报警由下面的独立开关控制，
+ * 因此不会因为底板上电或已有故障码而自动鸣叫。
  */
-#define ROBOT_BUZZER_ENABLE                   0
+#define ROBOT_BUZZER_ENABLE                   1
+
+/*
+ * 蜂鸣器故障自动报警开关。
+ *
+ * 0：只响应明确的手动开关命令，适合当前联调阶段，默认静音。
+ * 1：检测到故障时按 200ms 周期自动间歇鸣叫。
+ */
+#define ROBOT_BUZZER_FAULT_ALARM_ENABLE       0
 
 /*
  * 继电器调试翻转开关。
@@ -74,6 +94,16 @@
 #define ROBOT_CMD_TIMEOUT_MS                  700U
 
 /*
+ * 蓝牙控制租约超时时间。
+ *
+ * 手机 App 按住方向键时会周期性刷新运动命令。如果蓝牙断开、手机退出 App
+ * 或者方向键事件异常结束，超过这个时间没有刷新就自动停车并释放控制权。
+ * 当前 App 按 100ms 刷新，因此 800ms 能留出通信余量，同时不会让断线后
+ * 的小车继续运动太久。
+ */
+#define ROBOT_BLUETOOTH_OWNER_TIMEOUT_MS      800U
+
+/*
  * 调试模式下是否启用运动命令超时保护。
  *
  * 串口助手发送的 pwm/speed 命令通常是一条一条手动发送的，不会像 KICKPI
@@ -93,7 +123,7 @@
  * 自动测试只适合当前底板调试阶段。测试时必须让车轮悬空，避免上电后小车
  * 自己移动。收到任意 pwm、speed、stop 或 clear 命令后，自动测试会取消。
  */
-#define ROBOT_MOTOR_AUTO_TEST_ENABLE           1
+#define ROBOT_MOTOR_AUTO_TEST_ENABLE           0
 #define ROBOT_MOTOR_AUTO_TEST_PWM              100
 #define ROBOT_MOTOR_AUTO_TEST_START_DELAY_MS   1000U
 #define ROBOT_MOTOR_AUTO_TEST_RUN_MS           3000U

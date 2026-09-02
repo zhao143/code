@@ -32,29 +32,68 @@ from libs.Utils import read_json
 
 # --------------------------- 用户需要确认的参数 ---------------------------
 
-KICKPI_IP = "192.168.1.119"
+# 当前已经进入 KICKPI、K230 和底板联调阶段，打开 K230 -> KICKPI 的 HTTP 链路。
+# 如果只想单独测试屏幕和识别，再临时改回 False。
+KICKPI_LINK_ENABLE = True
+
+# KICKPI 直连以太网地址。后续联调时，K230 会通过这个地址访问 Web/API。
+KICKPI_IP = "192.168.2.2"
 KICKPI_HTTP_PORT = 8080
 API_TOKEN = "robot-dev-token"
 
-# True 使用 DHCP；如果局域网没有 DHCP，可以改成 False 并填写下面的静态参数。
-USE_DHCP = True
-STATIC_IP = "192.168.1.120"
+# K230 和 KICKPI 直连时建议使用静态地址，避免没有 DHCP 时等待超时。
+USE_DHCP = False
+STATIC_IP = "192.168.2.3"
 STATIC_MASK = "255.255.255.0"
-STATIC_GATEWAY = "192.168.1.1"
-STATIC_DNS = "192.168.1.1"
+STATIC_GATEWAY = "192.168.2.2"
+STATIC_DNS = "192.168.2.2"
 
 DISPLAY_WIDTH = 800
 DISPLAY_HEIGHT = 480
+# OV5647 在当前安装方向下画面上下左右相反。这里仅翻转摄像头输入，OSD
+# 控件仍按 800x480 正常坐标绘制，触摸坐标也不需要跟着旋转。
+CAMERA_HMIRROR = True
+CAMERA_VFLIP = True
 # 官方检测视频例程使用 640x360 作为 AI 图像通道；你的 Cron 模型输入是 320x320，
 # DetectionApp 会按 deploy_config.json 的参数完成补边和缩放。
 AI_FRAME_SIZE = [640, 360]
 CONTROL_HEARTBEAT_MS = 100
 STATUS_REFRESH_MS = 500
 HTTP_TIMEOUT_S = 0.35
+TOUCH_RELEASE_HOLD_MS = 180
 
-# Cron/Canaan 部署包路径。必须将 Cron/mp_deployment_source 整个目录复制到这里。
-MODEL_ROOT = "/sdcard/mp_deployment_source"
-DEPLOY_CONFIG_PATH = MODEL_ROOT + "/deploy_config.json"
+# K230 官方资料提供了 WBCRtsp 推流类，可以把 LCD 的 writeback 画面编码为
+# H.264/RTSP。它不会影响本地 LCD 显示，但会增加编码和网络负载。
+#
+# 浏览器不能直接播放 rtsp:// 地址，所以这个开关打开后还需要在 KICKPI
+# 上运行 RTSP -> HLS/WebRTC/MJPEG 的转换服务，Web 页面才能显示。当前先
+# 默认关闭，避免第一次联调时视频编码负载干扰触摸、识别和底盘控制。
+VIDEO_RTSP_ENABLE = False
+VIDEO_RTSP_PORT = 8554
+
+WBCRtsp = None
+if VIDEO_RTSP_ENABLE:
+    try:
+        from libs.WBCRtsp import WBCRtsp
+    except BaseException as exc:
+        print("RTSP disabled, WBCRtsp import failed:", exc)
+        WBCRtsp = None
+
+# K230 上电后 main.py 会很快自动执行，但此时网口 PHY、网线链路、
+# KICKPI 网关服务可能还没有完全准备好。下面这些参数用于开机延时和离线重试，
+# 避免“手动运行有网、上电自动运行没网”的启动时序问题。
+BOOT_NETWORK_DELAY_MS = 3000
+LAN_READY_TIMEOUT_MS = 15000
+LAN_RETRY_TIMEOUT_MS = 1500
+NETWORK_RETRY_MS = 3000
+
+# Cron/Canaan 部署包路径。脚本会按顺序自动查找这些位置，避免你手工挪文件时再改代码。
+MODEL_ROOT_CANDIDATES = (
+    "/data/Cron/mp_deployment_source",
+    "/data/Cron",
+    "/sdcard/mp_deployment_source",
+    "/sdcard/Cron",
+)
 
 # 若 SD 卡没有模型，程序会自动退化为“仅摄像头 + 触摸控制”，不影响底盘控制功能。
 ENABLE_VISION = True
@@ -88,15 +127,21 @@ MOTION = {
 }
 
 
-def connect_lan():
+def connect_lan(timeout_ms=LAN_READY_TIMEOUT_MS):
     """初始化 K230 的有线网卡并等待获得 IP 地址。
 
     资料中的 network_lan.py 使用 network.LAN() 和 DHCP。
-    这里保留静态 IP 分支，方便没有 DHCP 的直连测试。
+    这里保留静态 IP 分支，方便没有 DHCP 的直连测试。上电自启动时，
+    不能只看 ifconfig 是否有地址，还要等网口链路 isconnected() 变为真；
+    否则静态 IP 已经写入了，但物理网口还没连上，后续 HTTP 仍然会失败。
 
     返回：
         (是否成功, 当前 IP 字符串)
     """
+    if not KICKPI_LINK_ENABLE:
+        print("LAN skipped: local screen/vision test mode")
+        return False, "LOCAL"
+
     lan = network.LAN()
 
     try:
@@ -115,14 +160,26 @@ def connect_lan():
         print("LAN config failed:", exc)
         return False, "0.0.0.0"
 
-    deadline = time.ticks_add(time.ticks_ms(), 10000)
+    try:
+        name = lan.netdev_name()
+        if name is not None and hasattr(network, "set_default_dev"):
+            network.set_default_dev(name)
+    except Exception:
+        # 没有默认网卡选择 API 时不影响单网口使用。
+        pass
+
+    deadline = time.ticks_add(time.ticks_ms(), timeout_ms)
     while time.ticks_diff(deadline, time.ticks_ms()) > 0:
         os.exitpoint()
         try:
             ip = lan.ifconfig()[0]
         except Exception:
             ip = "0.0.0.0"
-        if ip != "0.0.0.0":
+        try:
+            connected = lan.isconnected()
+        except Exception:
+            connected = True
+        if ip != "0.0.0.0" and connected:
             print("LAN ready:", lan.ifconfig())
             return True, ip
         time.sleep_ms(100)
@@ -145,6 +202,9 @@ def http_request(method, path, payload=None):
     返回：
         (成功标志, JSON 响应字典或 None)。
     """
+    if not KICKPI_LINK_ENABLE:
+        return False, None
+
     sock = None
     try:
         addr = socket.getaddrinfo(KICKPI_IP, KICKPI_HTTP_PORT)[0][-1]
@@ -260,16 +320,31 @@ def point_to_button(point):
     return None
 
 
-def read_pressed_button(touch):
-    """读取当前触摸状态，只把按下和移动事件当作持续按住。"""
-    points = touch.read(1)
-    if not len(points):
-        return None
+def read_pressed_button(touch, now_ms, hold_name, hold_seen_ms):
+    """读取当前触摸状态，并对短暂抖动做去抖处理。
 
-    point = points[0]
-    if point.event == 0 or point.event == TOUCH.EVENT_DOWN or point.event == TOUCH.EVENT_MOVE:
-        return point_to_button(point)
-    return None
+    说明：
+        某些触摸屏在长按时会在 DOWN / MOVE / UP 之间短暂抖动。
+        这里保留最近一次有效触摸按钮一小段时间，避免按钮状态闪烁。
+    """
+    points = touch.read(1)
+    candidate = None
+
+    if len(points):
+        for point in points:
+            if hasattr(point, "event") and point.event == TOUCH.EVENT_UP:
+                continue
+            candidate = point_to_button(point)
+            if candidate is not None:
+                break
+
+    if candidate is not None:
+        return candidate, now_ms
+
+    if hold_name is not None and time.ticks_diff(now_ms, hold_seen_ms) <= TOUCH_RELEASE_HOLD_MS:
+        return hold_name, hold_seen_ms
+
+    return None, hold_seen_ms
 
 
 def draw_button(img, name, pressed_name):
@@ -318,10 +393,16 @@ def draw_overlay(img, pressed_name, ip_address, online, latest, detections):
 
     # 半透明状态栏，摄像头画面仍然从视频层显示在背景。
     img.draw_rectangle(0, 0, DISPLAY_WIDTH, 42, color=(190, 10, 15, 20), fill=True)
-    net_text = "KICKPI: ONLINE" if online else "KICKPI: OFFLINE"
-    net_color = (255, 80, 220, 110) if online else (255, 255, 70, 70)
+    if KICKPI_LINK_ENABLE:
+        net_text = "KICKPI: ONLINE" if online else "KICKPI: OFFLINE"
+        net_color = (255, 80, 220, 110) if online else (255, 255, 70, 70)
+        ip_text = "IP " + ip_address
+    else:
+        net_text = "K230: LOCAL TEST"
+        net_color = (255, 80, 220, 110)
+        ip_text = "IP LOCAL"
     img.draw_string_advanced(12, 10, 22, net_text, color=net_color)
-    img.draw_string_advanced(255, 10, 22, "IP " + ip_address, color=(255, 230, 230, 230))
+    img.draw_string_advanced(255, 10, 22, ip_text, color=(255, 230, 230, 230))
 
     faults = 0
     if isinstance(latest, dict):
@@ -393,8 +474,26 @@ def init_vision():
         return None
 
     try:
-        deploy_conf = read_json(DEPLOY_CONFIG_PATH)
-        model_path = MODEL_ROOT + "/" + deploy_conf["kmodel_path"]
+        deploy_conf = None
+        deploy_config_path = None
+        for root in MODEL_ROOT_CANDIDATES:
+            candidate = root.rstrip("/") + "/deploy_config.json"
+            try:
+                os.stat(candidate)
+                deploy_config_path = candidate
+                break
+            except Exception:
+                continue
+
+        if deploy_config_path is None:
+            raise FileNotFoundError("deploy_config.json not found in Cron or sdcard paths")
+
+        deploy_conf = read_json(deploy_config_path)
+        model_root = deploy_config_path.rsplit("/", 1)[0]
+        model_name = str(deploy_conf["kmodel_path"])
+        if model_name.startswith("./"):
+            model_name = model_name[2:]
+        model_path = model_name if model_name.startswith("/") else model_root.rstrip("/") + "/" + model_name
         os.stat(model_path)
 
         labels = deploy_conf["categories"]
@@ -422,6 +521,7 @@ def init_vision():
         # 让后面的坐标转换和屏幕标签都使用配置文件中的真实类别。
         det_app.robot_labels = labels
         print("vision model ready:")
+        print("  root:", model_root)
         print("  type:", model_type)
         print("  labels:", labels)
         print("  input:", model_input_size)
@@ -476,7 +576,12 @@ def detections_from_result(result, labels=None):
 def main():
     """初始化网络、相机、LCD 和触摸屏，然后进入驾驶主循环。"""
     os.exitpoint(os.EXITPOINT_ENABLE)
-    lan_ok, ip_address = connect_lan()
+    if KICKPI_LINK_ENABLE:
+        # main.py 上电自动运行时，先给网口 PHY、KICKPI 对端和交换状态一点时间。
+        time.sleep_ms(BOOT_NETWORK_DELAY_MS)
+        lan_ok, ip_address = connect_lan()
+    else:
+        lan_ok, ip_address = False, "LOCAL"
     touch = TOUCH(0)
 
     # PipeLine 会把摄像头视频绑定到 LCD 的 VIDEO1 层，并创建 OSD 图层。
@@ -486,15 +591,35 @@ def main():
         display_size=[DISPLAY_WIDTH, DISPLAY_HEIGHT],
         osd_layer_num=1,
     )
-    pipeline.create(to_ide=True)
+    pipeline.create(
+        to_ide=True,
+        hmirror=CAMERA_HMIRROR,
+        vflip=CAMERA_VFLIP,
+    )
+
+    rtsp_started = False
+    if VIDEO_RTSP_ENABLE and WBCRtsp is not None:
+        try:
+            # WBCRtsp 内部从已经初始化的 Display 获取实际 LCD 分辨率，
+            # 当前资料版本的端口固定为 8554、会话名固定为 test。
+            WBCRtsp.configure(DISPLAY_WIDTH, DISPLAY_HEIGHT)
+            WBCRtsp.start()
+            print("K230 RTSP:", "rtsp://" + ip_address + ":" + str(VIDEO_RTSP_PORT) + "/test")
+            rtsp_started = True
+        except BaseException as exc:
+            # 视频推流失败时只关闭视频，不影响本地画面、识别和运动控制。
+            print("RTSP start failed, continue without video:", exc)
+
     vision = init_vision()
 
     pressed_name = None
+    pressed_seen_ms = 0
     last_direction = None
     last_action = None
     last_control_ms = time.ticks_ms()
     last_status_ms = time.ticks_ms()
     last_vision_ms = time.ticks_ms()
+    last_network_retry_ms = time.ticks_ms()
     frame_id = 0
     online = lan_ok
     latest = {}
@@ -504,7 +629,8 @@ def main():
         while True:
             os.exitpoint()
             now = time.ticks_ms()
-            current = read_pressed_button(touch)
+            current, pressed_seen_ms = read_pressed_button(touch, now, pressed_name, pressed_seen_ms)
+            pressed_name = current
 
             # 只有成功初始化模型时才取 AI 通道；视频层仍由 PipeLine 持续显示。
             if vision is not None:
@@ -521,46 +647,60 @@ def main():
                         pass
                     vision = None
                     detections = []
-                if vision is not None and time.ticks_diff(now, last_vision_ms) >= VISION_SEND_INTERVAL_MS:
-                    send_vision_event(frame_id, detections)
-                    last_vision_ms = now
+            if vision is not None and time.ticks_diff(now, last_vision_ms) >= VISION_SEND_INTERVAL_MS:
+                send_vision_event(frame_id, detections)
+                last_vision_ms = now
 
-            # 方向按钮是“按住运行”模式，持续发心跳，避免任何一层失联后继续跑。
-            if current in DIRECTION_BUTTONS:
-                if current != last_direction or time.ticks_diff(now, last_control_ms) >= CONTROL_HEARTBEAT_MS:
-                    online = send_motion(current) or online
-                    last_control_ms = now
-                last_direction = current
-                last_action = None
-            else:
-                if last_direction is not None:
-                    online = send_motion("stop") or online
-                    last_direction = None
-                    last_control_ms = now
+            if KICKPI_LINK_ENABLE:
+                # 如果开机时网络没起来，或者 KICKPI 网关晚启动，主循环会定期重试。
+                # 这样不用手动停止脚本再运行一次，屏幕会在链路恢复后自动变为 ONLINE。
+                if not online and time.ticks_diff(now, last_network_retry_ms) >= NETWORK_RETRY_MS:
+                    retry_ok, retry_ip = connect_lan(LAN_RETRY_TIMEOUT_MS)
+                    last_network_retry_ms = now
+                    if retry_ok:
+                        ip_address = retry_ip
+                        online = True
 
-                # 动作按钮只在刚按下时触发一次，防止长按重复发送急停/清故障。
-                if current in ACTION_BUTTONS:
-                    if current != last_action:
-                        command = "stop" if current == "stop" else current
-                        if current == "clear":
-                            command = "clear_fault"
-                        online = send_state(command) or online
-                        if current == "stop":
-                            online = send_motion("stop") or online
-                        last_action = current
-                else:
+                # 方向按钮是“按住运行”模式，持续发心跳，避免任何一层失联后继续跑。
+                if current in DIRECTION_BUTTONS:
+                    if current != last_direction or time.ticks_diff(now, last_control_ms) >= CONTROL_HEARTBEAT_MS:
+                        online = send_motion(current) or online
+                        last_control_ms = now
+                    last_direction = current
                     last_action = None
+                else:
+                    if last_direction is not None:
+                        online = send_motion("stop") or online
+                        last_direction = None
+                        last_control_ms = now
 
-            if time.ticks_diff(now, last_status_ms) >= STATUS_REFRESH_MS:
-                status_ok, status_data = get_latest()
-                online = status_ok
-                if status_ok:
-                    latest = status_data
-                elif last_direction is not None:
-                    # 网关失联时，先清除本地运行态；网关自身 watchdog 也会停车。
-                    send_motion("stop")
-                    last_direction = None
-                last_status_ms = now
+                    # 动作按钮只在刚按下时触发一次，防止长按重复发送急停/清故障。
+                    if current in ACTION_BUTTONS:
+                        if current != last_action:
+                            command = "stop" if current == "stop" else current
+                            if current == "clear":
+                                command = "clear_fault"
+                            online = send_state(command) or online
+                            if current == "stop":
+                                online = send_motion("stop") or online
+                            last_action = current
+                    else:
+                        last_action = None
+
+                if time.ticks_diff(now, last_status_ms) >= STATUS_REFRESH_MS:
+                    status_ok, status_data = get_latest()
+                    online = status_ok
+                    if status_ok:
+                        latest = status_data
+                    elif last_direction is not None:
+                        # 网关失联时，先清除本地运行态；网关自身 watchdog 也会停车。
+                        send_motion("stop")
+                        last_direction = None
+                    last_status_ms = now
+            else:
+                # 本地测试模式只验证屏幕、触摸和识别，不发送任何 KICKPI 网络请求。
+                last_direction = current if current in DIRECTION_BUTTONS else None
+                last_action = current if current in ACTION_BUTTONS else None
 
             draw_overlay(pipeline.osd_img, current, ip_address, online, latest, detections)
             pipeline.show_image()
@@ -569,7 +709,11 @@ def main():
     except KeyboardInterrupt:
         print("user stop")
     except BaseException as exc:
-        sys.print_exception(exc)
+        printer = getattr(sys, "print_exception", None)
+        if printer is not None:
+            printer(exc)
+        else:
+            print(repr(exc))
     finally:
         # 任何退出路径都先停车，再释放摄像头、显示和触摸相关资源。
         try:
@@ -582,6 +726,11 @@ def main():
                 vision.deinit()
             except Exception:
                 pass
+        if rtsp_started and WBCRtsp is not None:
+            try:
+                WBCRtsp.stop()
+            except Exception as exc:
+                print("RTSP stop failed:", exc)
         pipeline.destroy()
         os.exitpoint(os.EXITPOINT_ENABLE_SLEEP)
         time.sleep_ms(100)

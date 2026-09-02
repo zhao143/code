@@ -52,6 +52,29 @@
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+/*
+ * Cortex-M 异常统一进入安全停车和 LED 故障指示。
+ *
+ * HardFault 发生后不能再调用依赖 RTOS、互斥量或串口的函数，所以这里只
+ * 直接拉低 TB6612 的 STBY，并用短暂忙等让 PC13 闪烁。这样既避免电机继续
+ * 输出，也能区分“CPU 异常停机”和普通应用状态。
+ */
+static void RobotCpuFaultLoop(void)
+{
+  HAL_GPIO_WritePin(TB6612_STBY_GPIO_Port, TB6612_STBY_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(Led_GPIO_Port, Led_Pin, GPIO_PIN_SET);
+  __disable_irq();
+
+  while (1)
+  {
+    HAL_GPIO_TogglePin(Led_GPIO_Port, Led_Pin);
+    for (volatile uint32_t delay = 0U; delay < 300000U; ++delay)
+    {
+      __NOP();
+    }
+  }
+}
+
 /* USER CODE END 0 */
 
 /* External variables --------------------------------------------------------*/
@@ -89,11 +112,7 @@ void HardFault_Handler(void)
   /* USER CODE BEGIN HardFault_IRQn 0 */
 
   /* USER CODE END HardFault_IRQn 0 */
-  while (1)
-  {
-    /* USER CODE BEGIN W1_HardFault_IRQn 0 */
-    /* USER CODE END W1_HardFault_IRQn 0 */
-  }
+  RobotCpuFaultLoop();
 }
 
 /**
@@ -104,11 +123,7 @@ void MemManage_Handler(void)
   /* USER CODE BEGIN MemoryManagement_IRQn 0 */
 
   /* USER CODE END MemoryManagement_IRQn 0 */
-  while (1)
-  {
-    /* USER CODE BEGIN W1_MemoryManagement_IRQn 0 */
-    /* USER CODE END W1_MemoryManagement_IRQn 0 */
-  }
+  RobotCpuFaultLoop();
 }
 
 /**
@@ -119,11 +134,7 @@ void BusFault_Handler(void)
   /* USER CODE BEGIN BusFault_IRQn 0 */
 
   /* USER CODE END BusFault_IRQn 0 */
-  while (1)
-  {
-    /* USER CODE BEGIN W1_BusFault_IRQn 0 */
-    /* USER CODE END W1_BusFault_IRQn 0 */
-  }
+  RobotCpuFaultLoop();
 }
 
 /**
@@ -134,11 +145,7 @@ void UsageFault_Handler(void)
   /* USER CODE BEGIN UsageFault_IRQn 0 */
 
   /* USER CODE END UsageFault_IRQn 0 */
-  while (1)
-  {
-    /* USER CODE BEGIN W1_UsageFault_IRQn 0 */
-    /* USER CODE END W1_UsageFault_IRQn 0 */
-  }
+  RobotCpuFaultLoop();
 }
 
 /**

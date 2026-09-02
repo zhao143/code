@@ -13,6 +13,21 @@ typedef enum
   ROBOT_APP_STATE_FAULT = 3
 } RobotAppState_t;
 
+/*
+ * 当前运动控制来源。
+ *
+ * KICKPI 同时代表 ROS2、Web 和经 KICKPI 转发的 K230 控制；蓝牙代表蓝牙
+ * 串口模块以及手机 App。UART1_DEBUG 仅用于以后重新打开底板文本调试版时
+ * 的兼容入口，不参与正式版本的 KICKPI/蓝牙抢占。
+ */
+typedef enum
+{
+  ROBOT_CONTROL_SOURCE_NONE = 0,
+  ROBOT_CONTROL_SOURCE_KICKPI = 1,
+  ROBOT_CONTROL_SOURCE_BLUETOOTH = 2,
+  ROBOT_CONTROL_SOURCE_UART1_DEBUG = 3
+} RobotControlSource_t;
+
 #define ROBOT_FAULT_COMM_TIMEOUT              0x0001U
 #define ROBOT_FAULT_BATTERY_LOW               0x0002U
 #define ROBOT_FAULT_OVER_TEMP                 0x0004U
@@ -25,6 +40,7 @@ typedef struct
   RobotAppState_t state;
   uint16_t faults;
   uint8_t motion_mode;
+  RobotControlSource_t control_owner;
   int16_t target_a;
   int16_t target_b;
   int16_t pwm_a;
@@ -79,5 +95,43 @@ void RobotApp_GetStatus(RobotAppStatus_t *out);
  * 正式 KICKPI 模式下用于响应状态请求；调试模式下状态本来会周期打印。
  */
 void RobotApp_RequestTelemetry(void);
+
+/*
+ * 查询控制来源名称，主要用于蓝牙文本反馈、串口日志和上位机状态显示。
+ */
+const char *RobotApp_ControlSourceName(RobotControlSource_t source);
+
+/*
+ * 请求设置电机目标。
+ *
+ * 返回 1 表示命令被接受，返回 0 表示被故障或其他控制来源拒绝。非零运动
+ * 命令遵守“同一时间只有一个来源拥有控制权”；零运动命令按来源处理，不会
+ * 被其他来源的周期性零刷新抢占或打断当前控制权。
+ */
+uint8_t RobotApp_RequestMotion(RobotControlSource_t source,
+                               int32_t motor_a,
+                               int32_t motor_b,
+                               uint8_t mode);
+
+/*
+ * 请求普通停车。stop 是全局安全动作，任何来源都可以调用，并会释放当前
+ * 控制权。
+ */
+void RobotApp_RequestStop(RobotControlSource_t source);
+
+/*
+ * 处理 enable、idle 和 clear_fault 等状态命令。状态命令本身不占用运动控制权。
+ */
+uint8_t RobotApp_RequestState(uint8_t command);
+
+/*
+ * 立即急停并锁定故障状态。恢复前必须调用 clear_fault，再重新发送运动命令。
+ */
+void RobotApp_RequestEstop(void);
+
+/*
+ * 处理 USART2 蓝牙收到的一整行文本命令。
+ */
+void RobotApp_OnBluetoothLine(const char *line);
 
 #endif

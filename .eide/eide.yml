@@ -36,6 +36,8 @@ virtualFolder:
                 - path: Core/Src/robot_encoder.c
                 - path: Core/Src/robot_motor.c
                 - path: Core/Src/robot_sensors.c
+                - path: Core/Src/iwdg.c
+                - path: Core/Src/robot_bluetooth.c
               folders: []
     - name: Drivers
       files: []
@@ -57,6 +59,7 @@ virtualFolder:
             - path: Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_exti.c
             - path: Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_i2c.c
             - path: Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_uart.c
+            - path: Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_iwdg.c
           folders: []
         - name: CMSIS
           files:

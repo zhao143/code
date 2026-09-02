@@ -26,6 +26,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "robot_app.h"
+#include "robot_motor.h"
 
 /* USER CODE END Includes */
 
@@ -146,6 +147,67 @@ void StartTask_Led(void *argument)
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
+
+/*
+ * FreeRTOS 资源异常的统一处理。
+ *
+ * 进入这里时，系统已经不能继续相信普通任务之间的调度状态，因此不再
+ * 使用互斥量、队列或串口。首先关闭电机，再关闭中断并用 LED 产生明显
+ * 的故障指示。重新上电后应结合调试器查看具体的断言位置或任务名称。
+ */
+static void RobotFreeRTOS_FaultLoop(void)
+{
+  RobotMotor_Stop();
+  RobotMotor_Enable(0U);
+  HAL_GPIO_WritePin(Led_GPIO_Port, Led_Pin, GPIO_PIN_SET);
+  __disable_irq();
+
+  for (;;)
+  {
+    HAL_GPIO_TogglePin(Led_GPIO_Port, Led_Pin);
+    for (volatile uint32_t delay = 0U; delay < 300000U; ++delay)
+    {
+      __NOP();
+    }
+  }
+}
+
+/*
+ * FreeRTOS configASSERT 的处理函数。
+ *
+ * file 和 line 在发布固件中不通过 UART 输出，避免故障发生时再次卡在
+ * 阻塞式串口发送；调试时可在调试器中查看调用栈和这两个参数。
+ */
+void RobotFreeRTOS_AssertFailed(const char *file, int line)
+{
+  (void)file;
+  (void)line;
+  RobotFreeRTOS_FaultLoop();
+}
+
+/*
+ * 任务堆栈溢出钩子。
+ *
+ * 如果某个任务栈不够，FreeRTOS 会把任务句柄和任务名传到这里。当前
+ * 项目先采用统一安全停车，之后可在调试器中读取 pcTaskName 精确定位。
+ */
+void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
+{
+  (void)xTask;
+  (void)pcTaskName;
+  RobotFreeRTOS_FaultLoop();
+}
+
+/*
+ * FreeRTOS 动态内存申请失败钩子。
+ *
+ * 常见原因是任务栈、定时器任务或其它 RTOS 对象占用的 heap 不足。
+ * 进入此处时必须保持电机关闭，不能继续接受运动命令。
+ */
+void vApplicationMallocFailedHook(void)
+{
+  RobotFreeRTOS_FaultLoop();
+}
 
 /* USER CODE END Application */
 
